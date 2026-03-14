@@ -355,4 +355,11 @@ discord_notify \
 # ─── 8. ログローテーション（30日超を削除） ───────────────────────────────
 find "${LOG_DIR}" -name "moltx-*.log" -mtime +30 -delete 2>/dev/null || true
 
+# ─── 9. Mana固有スキルを自動同期 ─────────────────────────────────────────
+SYNC_SCRIPT="${HOME}/.agent-gateway/scripts/sync-mana-skills.sh"
+if [[ -x "${SYNC_SCRIPT}" ]]; then
+  log "Syncing Mana skills to mana repo..."
+  bash "${SYNC_SCRIPT}" >>"${LOG_FILE}" 2>&1 || log "Skill sync failed (non-fatal)"
+fi
+
 log "=== MoltX Engagement Session Complete ==="
