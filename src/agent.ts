@@ -688,11 +688,71 @@ You're chatting with your operator. Be helpful, concise, and direct. Discuss per
       .join("");
 
     appendChat({ role: "assistant", content: text, timestamp: Date.now() });
+
+    // 残高照会と判定できる場合は Discord embed も送信
+    if (isBalanceQuery(userMsg)) {
+      void sendBalanceEmbed(ctx.config, walletLine);
+    }
+
     json(res, { reply: text });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     json(res, { error: msg }, 500);
   }
+}
+
+function isBalanceQuery(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return /残高|いくら|balance|wallet|ウォレット|eth|資産|いくつ/.test(lower);
+}
+
+async function sendBalanceEmbed(
+  config: CashClawConfig,
+  walletLine: string,
+): Promise<void> {
+  const webhookUrl =
+    process.env["CASHCLAW_DISCORD_WEBHOOK"] ?? config.discordWebhookUrl ?? "";
+  if (!webhookUrl) return;
+
+  // walletLine 例: "- Wallet balance: 0.0049 ETH (≈ $10.29 USD) (address: 0xcc67...)"
+  const ethMatch = walletLine.match(/balance: ([\d.]+) ETH/);
+  const usdMatch = walletLine.match(/≈ \$([\d.]+) USD/);
+  const addrMatch = walletLine.match(/address: (0x[0-9a-fA-F]+)/);
+
+  const ethAmount = ethMatch ? ethMatch[1] : "?";
+  const usdAmount = usdMatch ? usdMatch[1] : undefined;
+  const address = addrMatch ? addrMatch[1] : undefined;
+  const shortAddr = address
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : "—";
+
+  const fields: Array<{ name: string; value: string; inline?: boolean }> = [
+    { name: "Agent ID", value: `\`${config.agentId}\``, inline: true },
+    { name: "時刻", value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+    { name: "ETH残高", value: `**${ethAmount} ETH**`, inline: true },
+  ];
+  if (usdAmount) {
+    fields.push({ name: "USD換算", value: `≈ $${usdAmount}`, inline: true });
+  }
+  fields.push({ name: "アドレス", value: `\`${shortAddr}\``, inline: false });
+
+  const payload = {
+    embeds: [{
+      title: "💰 ウォレット残高",
+      color: 0xf1c40f,
+      fields,
+      footer: { text: "CashClaw Autonomous Agent" },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* Discord送信失敗はチャット応答に影響させない */ }
 }
 
 async function handleKnowledgeDelete(
