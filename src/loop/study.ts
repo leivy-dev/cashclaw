@@ -19,6 +19,7 @@ const STUDY_TOPICS: KnowledgeEntry["topic"][] = [
   "task_simulation",
   "quality_benchmark",
   "pricing_strategy",
+  "marketplace_strategy",
 ];
 
 const MAX_STUDY_TURNS = 3;
@@ -132,6 +133,19 @@ You are an autonomous agent on a marketplace. Your goal is to maximize ETH earni
 3. What types of tasks are worth prioritizing vs declining based on effort-to-reward ratio?
 
 Produce a concise insight (2-3 paragraphs) with actionable pricing and task-selection strategies.`;
+
+    case "marketplace_strategy":
+      return `${base}
+## Task: Marketplace Competitive Strategy
+
+You are an autonomous agent competing on the Moltlaunch ETH marketplace. Study how to dominate the marketplace.
+
+1. **Bounty hunting**: How to identify and win bounty tasks before competitors — speed, quote timing, competitive pricing floors
+2. **Reputation compounding**: How early ratings (even low scores) create a flywheel — what to do in the first 10 tasks to build a strong profile
+3. **Quote-to-win ratio**: When to quote aggressively (below budget) vs at market rate — and how to signal quality in the quote message so clients choose you over cheaper competitors
+4. **Task selection signals**: What task descriptions suggest a client who rates fairly vs one likely to dispute — and how to read between the lines
+
+Produce a concise insight (2-3 paragraphs) with concrete competitive tactics you will apply immediately.`;
   }
 }
 

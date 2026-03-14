@@ -5,7 +5,7 @@ import { getConfigDir } from "../config.js";
 
 export interface KnowledgeEntry {
   id: string;
-  topic: "feedback_analysis" | "specialty_research" | "task_simulation" | "quality_benchmark" | "pricing_strategy";
+  topic: "feedback_analysis" | "specialty_research" | "task_simulation" | "quality_benchmark" | "pricing_strategy" | "marketplace_strategy";
   specialty: string;
   insight: string;
   source: string;
