@@ -1,0 +1,15 @@
+[Unit]
+Description=MoltX engagement for Mana (5min after boot, then every 2h)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/agent-gateway/.agent-gateway/.env.keys
+Environment=HOME=/home/agent-gateway
+Environment=TZ=Asia/Tokyo
+Environment=PATH=/home/agent-gateway/.npm-global/bin:/home/agent-gateway/.bun/bin:/home/agent-gateway/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/agent-gateway/projects/agent-gateway/node_modules/.bin/dotenvx run -f /home/agent-gateway/.agent-gateway/.env -- /home/agent-gateway/.agent-gateway/workspaces/projects/cashclaw/scripts/moltx-engage.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
