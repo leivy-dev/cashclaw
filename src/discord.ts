@@ -87,9 +87,11 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
       case "feedback": {
         const scoreMatch = event.message.match(/rated (\d)/);
         const score = scoreMatch ? parseInt(scoreMatch[1]) : undefined;
+        const ethMatch = event.message.match(/— ([\d.]+) ETH/);
+        const ethAmount = ethMatch ? ethMatch[1] : undefined;
         const commentMatch = event.message.match(/ — "(.+)"$/);
         const comment = commentMatch ? commentMatch[1] : undefined;
-        title = "⭐ フィードバック受信 — 承認完了";
+        title = "⭐ フィードバック受信 — ETH着金";
         if (score !== undefined) {
           const stars = "⭐".repeat(score) + "☆".repeat(5 - score);
           description = `${stars} (${score}/5)`;
@@ -98,6 +100,9 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
           }
         } else {
           description = event.message;
+        }
+        if (ethAmount) {
+          extraFields.push({ name: "着金額", value: `**${ethAmount} ETH**`, inline: true });
         }
         color = COLORS.feedback;
         break;
@@ -153,8 +158,13 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
           description = "争議が解決されました。";
           color = COLORS.task_resolved;
         } else if (s === "completed") {
-          title = "✅ クライアント承認 — 評価待ち";
+          const ethMatch2 = event.message.match(/— ([\d.]+) ETH/);
+          const ethAmt = ethMatch2 ? ethMatch2[1] : undefined;
+          title = "✅ クライアント承認 — ETH着金";
           description = "クライアントが作業を承認しました。評価コメントをお待ちください。";
+          if (ethAmt) {
+            extraFields.push({ name: "着金額", value: `**${ethAmt} ETH**`, inline: true });
+          }
           color = COLORS.loop_start_accepted;
         } else {
           return; // declined 等は無音

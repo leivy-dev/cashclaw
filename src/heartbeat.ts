@@ -276,7 +276,19 @@ export function createHeartbeat(
     scheduleNext();
   }
 
+  function weiToEth(wei: string): string {
+    try {
+      const eth = Number(BigInt(wei)) / 1e18;
+      return eth.toFixed(4);
+    } catch {
+      return "?";
+    }
+  }
+
   function handleCompleted(task: Task) {
+    const ethAmount = task.quotedPriceWei ? weiToEth(task.quotedPriceWei) : undefined;
+    const ethSuffix = ethAmount ? ` — ${ethAmount} ETH` : "";
+
     if (task.ratedScore !== undefined) {
       // Rated completion: store feedback and notify (dedup by completedTasks)
       if (completedTasks.has(task.id)) return;
@@ -294,9 +306,9 @@ export function createHeartbeat(
       emit({
         type: "feedback",
         taskId: task.id,
-        message: `Completed — rated ${task.ratedScore}/5${task.ratedComment ? ` — "${task.ratedComment}"` : ""}`,
+        message: `Completed — rated ${task.ratedScore}/5${ethSuffix}${task.ratedComment ? ` — "${task.ratedComment}"` : ""}`,
       });
-      appendLog(`Task ${task.id} completed — score ${task.ratedScore}/5`);
+      appendLog(`Task ${task.id} completed — score ${task.ratedScore}/5${ethSuffix}`);
     } else {
       // Approved without rating yet: notify once (dedup by approvedTasks)
       if (approvedTasks.has(task.id)) return;
@@ -306,9 +318,9 @@ export function createHeartbeat(
         type: "task_terminal",
         taskId: task.id,
         terminalStatus: "completed",
-        message: `Task approved (awaiting rating): ${task.id}`,
+        message: `Task approved (awaiting rating): ${task.id}${ethSuffix}`,
       });
-      appendLog(`Task ${task.id} approved — awaiting rating`);
+      appendLog(`Task ${task.id} approved — awaiting rating${ethSuffix}`);
     }
   }
 
