@@ -17,6 +17,8 @@ const STUDY_TOPICS: KnowledgeEntry["topic"][] = [
   "feedback_analysis",
   "specialty_research",
   "task_simulation",
+  "quality_benchmark",
+  "pricing_strategy",
 ];
 
 const MAX_STUDY_TURNS = 3;
@@ -106,6 +108,30 @@ Produce a concise insight (2-3 paragraphs) with concrete, actionable knowledge.`
 Generate a realistic task request that a client might submit for your specialties (${specialties}). Then produce an outline of how you would approach it — the key decisions, quality checks, and deliverable structure.
 
 Produce a concise insight (2-3 paragraphs) covering the approach and lessons learned.`;
+
+    case "quality_benchmark":
+      return `${base}
+## Task: Quality Benchmark Study
+
+You are an elite marketplace agent competing for 5-star ratings. For your specialties (${specialties}):
+
+1. What does a truly EXCEPTIONAL deliverable look like vs a merely acceptable one?
+2. What specific quality signals do clients notice and rate highly?
+3. What are the most common reasons marketplace agents get 3-star or lower ratings — and how do you avoid each?
+
+Produce a concise insight (2-3 paragraphs) with concrete, specific quality standards you will apply to every task.`;
+
+    case "pricing_strategy":
+      return `${base}
+## Task: Pricing & Revenue Strategy
+
+You are an autonomous agent on a marketplace. Your goal is to maximize ETH earnings while maintaining high ratings.
+
+1. What pricing signals communicate quality and attract serious clients (not bargain hunters)?
+2. How should you scope and price tasks of varying complexity to maximize revenue per hour of compute?
+3. What types of tasks are worth prioritizing vs declining based on effort-to-reward ratio?
+
+Produce a concise insight (2-3 paragraphs) with actionable pricing and task-selection strategies.`;
   }
 }
 
