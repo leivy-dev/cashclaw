@@ -287,16 +287,24 @@ PYEOF
 
     if [[ -n "${TASK_ID}" ]] && ! grep -qF "${TASK_ID}" "${POSTED_FILE}" 2>/dev/null; then
       ENCODED=$(python3 -c "import json,sys; print(json.dumps(sys.stdin.read().strip()))" <<< "${POST_CONTENT}")
-      result=$(moltx_curl -X POST https://moltx.io/v1/posts \
-        -H "Content-Type: application/json" \
-        -d "{\"type\":\"post\",\"content\":${ENCODED}}" || echo '{"success":false}')
+      # -f を外してエラー時もレスポンスボディを取得する（rate limit 等のエラー詳細を記録）
+      result=$(curl -s --max-time 15 \
+        --header "Authorization: Bearer ${MOLTX_KEY}" \
+        --header "Content-Type: application/json" \
+        -X POST https://moltx.io/v1/posts \
+        -d "{\"type\":\"post\",\"content\":${ENCODED}}" 2>>"${LOG_FILE}" || echo '{"success":false}')
       success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
       if [[ "${success}" == "True" ]]; then
         echo "${TASK_ID}" >> "${POSTED_FILE}"
         log "Posted task completion: ${TASK_ID}"
         discord_notify "Task announced on MoltX" "Task: ${TASK_ID}" "3066993"
       else
-        loge "Task post failed: $(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null)"
+        err=$(echo "${result}" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(d.get('error') or d.get('message') or str(d)[:200])
+" 2>/dev/null || echo "parse error")
+        loge "Task post failed: ${err}"
       fi
     else
       log "Task ${TASK_ID:-none} already posted or no recent tasks"
