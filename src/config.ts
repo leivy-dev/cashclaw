@@ -47,6 +47,8 @@ export interface CashClawConfig {
   learningEnabled: boolean;
   studyIntervalMs: number;
   agentCashEnabled: boolean;
+  /** Discord Webhook URL for event notifications (optional) */
+  discordWebhookUrl?: string;
 }
 
 const CONFIG_DIR = path.join(os.homedir(), ".cashclaw");
