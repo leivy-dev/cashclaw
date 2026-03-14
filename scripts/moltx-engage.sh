@@ -67,15 +67,16 @@ discord_notify() {
   local title="$1" description="$2" color="${3:-5814783}"
   [[ -z "${DISCORD_WEBHOOK}" ]] && return 0
   local payload
-  payload=$(python3 -c "
-import json, sys
+  # env var 経由でシェル変数を渡す（直接 -c 文字列展開すると ' や特殊文字で SyntaxError）
+  payload=$(DISCORD_TITLE="${title}" DISCORD_DESC="${description}" DISCORD_FOOTER_TEXT="${FOOTER_TEXT}" DISCORD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 -c "
+import json, os
 payload = {
   'embeds': [{
-    'title': $(python3 -c "import json; print(json.dumps('${title}'))"),
-    'description': $(python3 -c "import json; print(json.dumps('${description}'))"),
+    'title': os.environ.get('DISCORD_TITLE', ''),
+    'description': os.environ.get('DISCORD_DESC', ''),
     'color': ${color},
-    'footer': {'text': $(python3 -c "import json; print(json.dumps('${FOOTER_TEXT}'))")},
-    'timestamp': '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+    'footer': {'text': os.environ.get('DISCORD_FOOTER_TEXT', '')},
+    'timestamp': os.environ.get('DISCORD_TIMESTAMP', '')
   }]
 }
 print(json.dumps(payload))
@@ -91,16 +92,73 @@ log "=== MoltX Engagement Session Start (${AGENT_DISPLAY}) ==="
 # ─── 0. フィード・ハッシュタグ取得 ────────────────────────────────────────
 log "Fetching global feed and trending hashtags..."
 FEED=$(moltx_curl "https://moltx.io/v1/feed/global?limit=30" || echo "{}")
+FEED=${FEED:-"{}"}
 TRENDING_TAGS=$(moltx_curl "https://moltx.io/v1/hashtags/trending" || echo "{}")
+TRENDING_TAGS=${TRENDING_TAGS:-"{}"}
 
-# ─── 1. LLMで投稿文を生成 ─────────────────────────────────────────────────
+# ─── 1. エンゲージメント（投稿前に必須） ─────────────────────────────────
+# MoltX API 仕様: いいね/フォローをしてから投稿しないと "Engage before posting!" エラー
+log "Liking posts from global feed..."
+POST_IDS=$(MOLTX_FEED_JSON="${FEED}" MOLTX_HANDLE="${MOLTX_HANDLE}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
+import json, random, os
+try:
+    d = json.loads(os.environ.get("MOLTX_FEED_JSON", "{}"))
+    posts = d.get("data", {}).get("posts", [])
+    handle = os.environ.get("MOLTX_HANDLE", "")
+    others = [p["id"] for p in posts if p.get("author_name", "") != handle]
+    print("\n".join(random.sample(others, min(5, len(others)))))
+except Exception as e:
+    print(f"FEED_PARSE_ERROR: {e}", file=sys.stderr)
+PYEOF
+)
+
+LIKED=0
+for pid in ${POST_IDS:-}; do
+  result=$(moltx_curl -X POST "https://moltx.io/v1/posts/${pid}/like" \
+    -H "Content-Type: application/json" || echo '{"success":false}')
+  success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
+  [[ "${success}" == "True" ]] && LIKED=$((LIKED + 1))
+done
+log "Liked ${LIKED} posts"
+
+log "Following top agents..."
+LEADERS=$(moltx_curl "https://moltx.io/v1/leaderboard" || echo "{}")
+
+HANDLES=$(MOLTX_LEADERS_JSON="${LEADERS}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
+import json, os
+try:
+    leaders = json.loads(os.environ.get("MOLTX_LEADERS_JSON", "{}")).get("data", {}).get("leaders", [])
+    for a in leaders[:8]:
+        name = a.get("name", "")
+        if name:
+            print(name)
+except Exception as e:
+    print(f"LEADERBOARD_PARSE_ERROR: {e}", file=sys.stderr)
+PYEOF
+)
+
+FOLLOWED=0
+for handle in ${HANDLES:-}; do
+  [[ -z "${handle}" ]] && continue
+  result=$(moltx_curl -X POST "https://moltx.io/v1/follow/${handle}" \
+    -H "Content-Type: application/json" || echo '{"success":false}')
+  success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
+  if [[ "${success}" == "True" ]]; then
+    FOLLOWED=$((FOLLOWED + 1))
+    log "Followed @${handle}"
+  fi
+done
+log "Followed ${FOLLOWED} new agents"
+
+# ─── 2. LLMで投稿文を生成 ─────────────────────────────────────────────────
 log "Generating post with LLM..."
 
-FEED_CONTEXT=$(echo "${FEED}" | python3 - << 'PYEOF' 2>>"${LOG_FILE}"
-import json, sys
+# NOTE: env var 経由でデータを渡す（echo | python3 - << HEREDOC の heredoc+pipe 競合を回避）
+FEED_CONTEXT=$(MOLTX_FEED_JSON="${FEED}" MOLTX_HANDLE="${MOLTX_HANDLE}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
+import json, os
 try:
-    posts = json.load(sys.stdin).get("data", {}).get("posts", [])
-    my_handle = __import__("os").environ.get("MOLTX_HANDLE", "")
+    posts = json.loads(os.environ.get("MOLTX_FEED_JSON", "{}")).get("data", {}).get("posts", [])
+    my_handle = os.environ.get("MOLTX_HANDLE", "")
     good = [p for p in posts
             if not p.get("content","").startswith("!kibu")
             and p.get("author_name","") != my_handle
@@ -112,12 +170,12 @@ except Exception as e:
 PYEOF
 )
 
-TOP_TAGS=$(echo "${TRENDING_TAGS}" | python3 - << 'PYEOF' 2>>"${LOG_FILE}"
-import json, sys
+TOP_TAGS=$(MOLTX_TRENDING_JSON="${TRENDING_TAGS}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
+import json, os
 try:
-    tags = json.load(sys.stdin).get("data", {}).get("hashtags", [])
+    tags = json.loads(os.environ.get("MOLTX_TRENDING_JSON", "{}")).get("data", {}).get("hashtags", [])
     print(", ".join(f"#{t['name']}" for t in tags[:8]))
-except Exception as e:
+except Exception:
     print("#agents #aiagents #moltx #agenteconomy")
 PYEOF
 )
@@ -190,71 +248,17 @@ else
   loge "LLM generation returned empty or too short: '${GENERATED_POST:-}'"
 fi
 
-# ─── 2. グローバルフィードのいいね ────────────────────────────────────────
-log "Liking posts from global feed..."
-POST_IDS=$(echo "${FEED}" | python3 - << PYEOF 2>>"${LOG_FILE}"
-import json, sys, random, os
-try:
-    d = json.load(sys.stdin)
-    posts = d.get("data", {}).get("posts", [])
-    handle = os.environ.get("MOLTX_HANDLE", "")
-    others = [p["id"] for p in posts if p.get("author_name", "") != handle]
-    print("\n".join(random.sample(others, min(5, len(others)))))
-except Exception as e:
-    print(f"FEED_PARSE_ERROR: {e}", file=sys.stderr)
-PYEOF
-)
-
-LIKED=0
-for pid in ${POST_IDS:-}; do
-  result=$(moltx_curl -X POST "https://moltx.io/v1/posts/${pid}/like" \
-    -H "Content-Type: application/json" || echo '{"success":false}')
-  success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
-  [[ "${success}" == "True" ]] && LIKED=$((LIKED + 1))
-done
-log "Liked ${LIKED} posts"
-
-# ─── 3. リーダーボードトップをフォロー ──────────────────────────────────
-log "Following top agents..."
-LEADERS=$(moltx_curl "https://moltx.io/v1/leaderboard" || echo "{}")
-
-HANDLES=$(echo "${LEADERS}" | python3 - << 'PYEOF' 2>>"${LOG_FILE}"
-import json, sys
-try:
-    leaders = json.load(sys.stdin).get("data", {}).get("leaders", [])
-    for a in leaders[:8]:
-        name = a.get("name", "")
-        if name:
-            print(name)
-except Exception as e:
-    print(f"LEADERBOARD_PARSE_ERROR: {e}", file=sys.stderr)
-PYEOF
-)
-
-FOLLOWED=0
-for handle in ${HANDLES:-}; do
-  [[ -z "${handle}" ]] && continue
-  result=$(moltx_curl -X POST "https://moltx.io/v1/follow/${handle}" \
-    -H "Content-Type: application/json" || echo '{"success":false}')
-  success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
-  if [[ "${success}" == "True" ]]; then
-    FOLLOWED=$((FOLLOWED + 1))
-    log "Followed @${handle}"
-  fi
-done
-log "Followed ${FOLLOWED} new agents"
-
-# ─── 4. Moltlaunchの完了タスクを投稿（重複防止） ─────────────────────────
+# ─── 3. Moltlaunchの完了タスクを投稿（重複防止） ─────────────────────────
 if [[ -n "${AGENT_MOLTLAUNCH_ID:-}" ]]; then
   log "Checking Moltlaunch for recent completions (agentId: ${AGENT_MOLTLAUNCH_ID})..."
   TASKS=$(mltl tasks --json 2>>"${LOG_FILE}" || echo '{"tasks":[]}')
 
-  TASK_INFO=$(echo "${TASKS}" | AGENT_ID="${AGENT_MOLTLAUNCH_ID}" AGENT_REP="${AGENT_REPUTATION}" python3 - << 'PYEOF' 2>>"${LOG_FILE}"
-import json, sys, time, os
+  TASK_INFO=$(MOLTX_TASKS_JSON="${TASKS}" AGENT_ID="${AGENT_MOLTLAUNCH_ID}" AGENT_REP="${AGENT_REPUTATION}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
+import json, time, os
 agent_id = os.environ.get("AGENT_ID", "")
 agent_rep = os.environ.get("AGENT_REP", "N/A")
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(os.environ.get("MOLTX_TASKS_JSON", '{"tasks":[]}'))
     tasks = d.get("tasks", [])
     completed = [t for t in tasks
                  if t.get("status") == "completed" and str(t.get("agentId", "")) == agent_id]
@@ -283,16 +287,24 @@ PYEOF
 
     if [[ -n "${TASK_ID}" ]] && ! grep -qF "${TASK_ID}" "${POSTED_FILE}" 2>/dev/null; then
       ENCODED=$(python3 -c "import json,sys; print(json.dumps(sys.stdin.read().strip()))" <<< "${POST_CONTENT}")
-      result=$(moltx_curl -X POST https://moltx.io/v1/posts \
-        -H "Content-Type: application/json" \
-        -d "{\"type\":\"post\",\"content\":${ENCODED}}" || echo '{"success":false}')
+      # -f を外してエラー時もレスポンスボディを取得する（rate limit 等のエラー詳細を記録）
+      result=$(curl -s --max-time 15 \
+        --header "Authorization: Bearer ${MOLTX_KEY}" \
+        --header "Content-Type: application/json" \
+        -X POST https://moltx.io/v1/posts \
+        -d "{\"type\":\"post\",\"content\":${ENCODED}}" 2>>"${LOG_FILE}" || echo '{"success":false}')
       success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
       if [[ "${success}" == "True" ]]; then
         echo "${TASK_ID}" >> "${POSTED_FILE}"
         log "Posted task completion: ${TASK_ID}"
         discord_notify "Task announced on MoltX" "Task: ${TASK_ID}" "3066993"
       else
-        loge "Task post failed: $(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null)"
+        err=$(echo "${result}" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(d.get('error') or d.get('message') or str(d)[:200])
+" 2>/dev/null || echo "parse error")
+        loge "Task post failed: ${err}"
       fi
     else
       log "Task ${TASK_ID:-none} already posted or no recent tasks"
@@ -303,10 +315,10 @@ fi
 # ─── 5. 通知確認 ─────────────────────────────────────────────────────────
 log "Checking notifications..."
 NOTIFS=$(moltx_curl "https://moltx.io/v1/notifications?limit=20" || echo "{}")
-NOTIF_SUMMARY=$(echo "${NOTIFS}" | python3 - << 'PYEOF' 2>>"${LOG_FILE}"
-import json, sys
+NOTIF_SUMMARY=$(MOLTX_NOTIFS_JSON="${NOTIFS}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
+import json, os
 try:
-    notifs = json.load(sys.stdin).get("data", {}).get("notifications", [])
+    notifs = json.loads(os.environ.get("MOLTX_NOTIFS_JSON", "{}")).get("data", {}).get("notifications", [])
     unread = [n for n in notifs if not n.get("read", True)]
     print(f"{len(unread)}/{len(notifs)}")
     for n in unread[:3]:
