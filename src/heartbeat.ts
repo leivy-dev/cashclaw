@@ -66,6 +66,8 @@ export function createHeartbeat(
   let wsFailLogged = false;
   const processing = new Set<string>();
   const completedTasks = new Set<string>();
+  // Track tasks that completed without rating yet (so we can dedup the approval notification)
+  const approvedTasks = new Set<string>();
   // Track task+status combos to prevent duplicate processing from WS+poll overlap
   const processedVersions = new Map<string, string>();
   const listeners: EventListener[] = [];
@@ -173,7 +175,7 @@ export function createHeartbeat(
 
   function handleTaskEvent(task: Task) {
     if (TERMINAL_STATUSES.has(task.status)) {
-      if (task.status === "completed" && task.ratedScore !== undefined) {
+      if (task.status === "completed") {
         handleCompleted(task);
       } else if (
         task.status === "cancelled" ||
@@ -275,24 +277,39 @@ export function createHeartbeat(
   }
 
   function handleCompleted(task: Task) {
-    if (task.ratedScore === undefined) return;
-    if (completedTasks.has(task.id)) return;
-    completedTasks.add(task.id);
+    if (task.ratedScore !== undefined) {
+      // Rated completion: store feedback and notify (dedup by completedTasks)
+      if (completedTasks.has(task.id)) return;
+      completedTasks.add(task.id);
+      approvedTasks.add(task.id); // Mark as fully done
 
-    storeFeedback({
-      taskId: task.id,
-      taskDescription: task.task,
-      score: task.ratedScore,
-      comments: task.ratedComment ?? "",
-      timestamp: Date.now(),
-    });
+      storeFeedback({
+        taskId: task.id,
+        taskDescription: task.task,
+        score: task.ratedScore,
+        comments: task.ratedComment ?? "",
+        timestamp: Date.now(),
+      });
 
-    emit({
-      type: "feedback",
-      taskId: task.id,
-      message: `Completed — rated ${task.ratedScore}/5`,
-    });
-    appendLog(`Task ${task.id} completed — score ${task.ratedScore}/5`);
+      emit({
+        type: "feedback",
+        taskId: task.id,
+        message: `Completed — rated ${task.ratedScore}/5${task.ratedComment ? ` — "${task.ratedComment}"` : ""}`,
+      });
+      appendLog(`Task ${task.id} completed — score ${task.ratedScore}/5`);
+    } else {
+      // Approved without rating yet: notify once (dedup by approvedTasks)
+      if (approvedTasks.has(task.id)) return;
+      approvedTasks.add(task.id);
+
+      emit({
+        type: "task_terminal",
+        taskId: task.id,
+        terminalStatus: "completed",
+        message: `Task approved (awaiting rating): ${task.id}`,
+      });
+      appendLog(`Task ${task.id} approved — awaiting rating`);
+    }
   }
 
   function scheduleNext() {

@@ -26,7 +26,7 @@ const COLORS = {
 } as const;
 
 // tool_call events: only these tool names fire a notification
-const NOTIFIABLE_TOOLS = new Set(["claim_bounty", "quote_task"]);
+const NOTIFIABLE_TOOLS = new Set(["claim_bounty", "quote_task", "submit_work"]);
 
 export interface DiscordNotifierConfig {
   webhookUrl: string;
@@ -55,6 +55,7 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
     let title = "";
     let description = event.message;
     let color = 0x95a5a6;
+    const extraFields: Array<{ name: string; value: string; inline?: boolean }> = [];
 
     switch (event.type) {
       // ── ループ開始: statusで分岐 ──
@@ -86,10 +87,17 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
       case "feedback": {
         const scoreMatch = event.message.match(/rated (\d)/);
         const score = scoreMatch ? parseInt(scoreMatch[1]) : undefined;
+        const commentMatch = event.message.match(/ — "(.+)"$/);
+        const comment = commentMatch ? commentMatch[1] : undefined;
         title = "⭐ フィードバック受信 — 承認完了";
         if (score !== undefined) {
           const stars = "⭐".repeat(score) + "☆".repeat(5 - score);
           description = `${stars} (${score}/5)`;
+          if (comment) {
+            description += `\n> ${comment}`;
+          }
+        } else {
+          description = event.message;
         }
         color = COLORS.feedback;
         break;
@@ -104,10 +112,23 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
           const ok = event.message.includes("→ ok");
           description = ok ? "ETHをウォレットに回収しました。" : `回収失敗: ${event.message}`;
           color = COLORS.claim_bounty;
+        } else if (toolName === "submit_work") {
+          const ok = event.message.includes("→ ok");
+          title = ok ? "📤 納品送信 — レビュー待ち" : "❌ 納品送信失敗";
+          description = ok
+            ? "作業結果をクライアントに送信しました。レビューをお待ちください。"
+            : `送信エラー: ${event.message}`;
+          color = ok ? COLORS.loop_complete : COLORS.error;
         } else {
+          // quote_task: ETH金額を抽出して専用フィールドに表示
+          const priceMatch = event.message.match(/"price_eth"\s*:\s*"([^"]+)"/);
+          const priceEth = priceMatch ? priceMatch[1] : undefined;
           title = "📋 見積もり送信";
-          description = event.message;
+          description = "クライアントの承認をお待ちください。";
           color = COLORS.quote_task;
+          if (priceEth) {
+            extraFields.push({ name: "見積金額", value: `**${priceEth} ETH**`, inline: true });
+          }
         }
         break;
       }
@@ -131,6 +152,10 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
           title = "🏁 ディスピュート解決";
           description = "争議が解決されました。";
           color = COLORS.task_resolved;
+        } else if (s === "completed") {
+          title = "✅ クライアント承認 — 評価待ち";
+          description = "クライアントが作業を承認しました。評価コメントをお待ちください。";
+          color = COLORS.loop_start_accepted;
         } else {
           return; // declined 等は無音
         }
@@ -173,6 +198,10 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
 
     if (event.taskId) {
       fields.push({ name: "Task ID", value: `\`${event.taskId.slice(0, 8)}...\``, inline: true });
+    }
+
+    for (const f of extraFields) {
+      fields.push(f);
     }
 
     await send({
