@@ -5,7 +5,14 @@ import os from "node:os";
 export interface LLMConfig {
   provider: "anthropic" | "openai" | "openrouter";
   model: string;
+  /** API キーをそのまま保存する場合に使用（非推奨: apiKeyEnvVar を推奨）。 */
   apiKey: string;
+  /**
+   * API キーを環境変数名で参照する場合に使用。
+   * 例: "ANTHROPIC_API_KEY" → 実行時に process.env["ANTHROPIC_API_KEY"] を参照する。
+   * apiKey より優先される。
+   */
+  apiKeyEnvVar?: string;
 }
 
 export interface PricingConfig {
@@ -86,11 +93,24 @@ export function saveConfig(config: CashClawConfig): void {
   fs.chmodSync(CONFIG_PATH, 0o600);
 }
 
+/**
+ * LLM の API キーを解決する。
+ * apiKeyEnvVar が設定されている場合は環境変数から取得し、
+ * そうでない場合は apiKey フィールドを返す。
+ */
+export function resolveApiKey(llm: LLMConfig): string {
+  if (llm.apiKeyEnvVar) {
+    return process.env[llm.apiKeyEnvVar] ?? llm.apiKey ?? "";
+  }
+  return llm.apiKey ?? "";
+}
+
 /** Check if config has all required fields for running the agent */
 export function isConfigured(): boolean {
   const config = loadConfig();
   if (!config) return false;
-  return Boolean(config.agentId && config.llm?.apiKey && config.llm?.provider);
+  const apiKey = resolveApiKey(config.llm);
+  return Boolean(config.agentId && apiKey && config.llm?.provider);
 }
 
 /** Save partial config fields, merging with existing config or defaults */
@@ -111,7 +131,10 @@ export function initConfig(opts: {
   agentId: string;
   provider: LLMConfig["provider"];
   model?: string;
-  apiKey: string;
+  /** API キーを直接指定する場合。apiKeyEnvVar と排他。 */
+  apiKey?: string;
+  /** API キーを環境変数名で参照する場合（推奨）。例: "ANTHROPIC_API_KEY" */
+  apiKeyEnvVar?: string;
   specialties?: string[];
 }): CashClawConfig {
   const modelDefaults: Record<LLMConfig["provider"], string> = {
@@ -120,14 +143,17 @@ export function initConfig(opts: {
     openrouter: "anthropic/claude-sonnet-4-20250514",
   };
 
+  const llm: LLMConfig = {
+    provider: opts.provider,
+    model: opts.model ?? modelDefaults[opts.provider],
+    apiKey: opts.apiKey ?? "",
+    ...(opts.apiKeyEnvVar ? { apiKeyEnvVar: opts.apiKeyEnvVar } : {}),
+  };
+
   const config: CashClawConfig = {
     ...DEFAULT_CONFIG,
     agentId: opts.agentId,
-    llm: {
-      provider: opts.provider,
-      model: opts.model ?? modelDefaults[opts.provider],
-      apiKey: opts.apiKey,
-    },
+    llm,
     specialties: opts.specialties ?? [],
   };
 

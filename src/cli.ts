@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { loadConfig, saveConfig, initConfig, isConfigured, getConfigDir, type LLMConfig } from "./config.js";
+import { loadConfig, saveConfig, initConfig, isConfigured, resolveApiKey, getConfigDir, type LLMConfig } from "./config.js";
 import { startAgent } from "./agent.js";
 
 const PID_FILE = path.join(os.homedir(), ".cashclaw", "cashclaw.pid");
@@ -108,21 +108,53 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
       provider = (raw.trim() || "anthropic") as LLMConfig["provider"];
     }
 
-    // API key (env takes priority when not passed via flag)
+    // API key: 環境変数参照モード（推奨）か直接指定かを選択する
     const envKeyMap: Record<LLMConfig["provider"], string> = {
       anthropic: "ANTHROPIC_API_KEY",
       openai: "OPENAI_API_KEY",
       openrouter: "OPENROUTER_API_KEY",
     };
-    const envKey = process.env[envKeyMap[provider]] ?? "";
-    let apiKey = flags["api-key"] ?? flags["apiKey"] ?? envKey;
-    if (!apiKey) {
-      apiKey = await prompt(rl, `API key for ${provider}: `);
-    }
-    apiKey = apiKey.trim();
-    if (!apiKey) {
-      console.error("Error: API key is required.");
-      process.exit(1);
+    const defaultEnvVar = envKeyMap[provider];
+
+    // --use-env-key フラグ or --api-key-env-var で環境変数名を指定した場合は
+    // API キーをコンフィグに書かず、実行時に環境変数から読む
+    const useEnvKey = flags["use-env-key"] === "true" || flags["api-key-env-var"] !== undefined;
+    const apiKeyEnvVar = flags["api-key-env-var"] ?? (useEnvKey ? defaultEnvVar : undefined);
+
+    let apiKey = "";
+    if (!useEnvKey) {
+      // 環境変数を即時解決して apiKey として保存するモード
+      const envKey = process.env[defaultEnvVar] ?? "";
+      apiKey = flags["api-key"] ?? flags["apiKey"] ?? envKey;
+      if (!apiKey) {
+        const raw = await prompt(rl, `API key for ${provider} (or press Enter to use $${defaultEnvVar} at runtime): `);
+        if (raw.trim() === "") {
+          // 空 Enter → 環境変数参照モードに切り替え
+          console.log(`→ Using $${defaultEnvVar} at runtime (key not stored in config).`);
+          apiKey = "";
+        } else {
+          apiKey = raw.trim();
+        }
+      }
+      // env var が実行時に存在するなら apiKey が空でも OK
+      const resolved = apiKey || process.env[defaultEnvVar] || "";
+      if (!resolved) {
+        console.error(`Error: API key required. Set $${defaultEnvVar} or pass --api-key.`);
+        process.exit(1);
+      }
+      if (!apiKey) {
+        // 空 = 実行時参照モードに自動切替
+        apiKey = "";
+      }
+    } else {
+      // 環境変数参照モード: 今すぐ解決できなくても OK（起動時に解決される）
+      const currentVal = process.env[apiKeyEnvVar ?? defaultEnvVar] ?? "";
+      if (!currentVal) {
+        console.warn(`Warning: $${apiKeyEnvVar ?? defaultEnvVar} is not set in the current environment.`);
+        console.warn("Make sure it is set when starting cashclaw.");
+      } else {
+        console.log(`✓ $${apiKeyEnvVar ?? defaultEnvVar} is set (will be read at runtime).`);
+      }
     }
 
     // Model
@@ -148,7 +180,13 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
       specialties = raw.split(",").map((s) => s.trim()).filter(Boolean);
     }
 
-    const config = initConfig({ agentId, provider, model, apiKey, specialties });
+    const config = initConfig({
+      agentId,
+      provider,
+      model,
+      ...(apiKeyEnvVar ? { apiKeyEnvVar } : { apiKey }),
+      specialties,
+    });
     console.log(`\nConfig saved to ${getConfigDir()}/cashclaw.json`);
     console.log(`Agent ID: ${config.agentId}`);
     console.log(`Provider: ${config.llm.provider} / ${config.llm.model}`);
@@ -255,14 +293,23 @@ Usage:
 Init options:
   --agent-id ID          Agent ID (from moltlaunch registration)
   --provider PROVIDER    LLM provider: anthropic | openai | openrouter
-  --api-key KEY          API key (also reads ANTHROPIC_API_KEY, OPENAI_API_KEY env)
+  --api-key KEY          API key (store directly in config)
+  --use-env-key          Don't store API key; read from env var at runtime (recommended)
+  --api-key-env-var VAR  Env var name to read API key from (implies --use-env-key)
   --model MODEL          LLM model name
   --specialties LIST     Comma-separated specialties
 
 Environment variables:
-  ANTHROPIC_API_KEY      Auto-used when provider=anthropic (if no --api-key)
+  ANTHROPIC_API_KEY      Auto-used when provider=anthropic (direct or via --use-env-key)
   OPENAI_API_KEY         Auto-used when provider=openai
   OPENROUTER_API_KEY     Auto-used when provider=openrouter
+
+Examples:
+  # agent-gateway の認証情報を使う（APIキーをコンフィグに書かない）
+  cashclaw-cli init --agent-id <id> --provider anthropic --use-env-key
+
+  # APIキーを直接指定
+  cashclaw-cli init --agent-id <id> --provider anthropic --api-key sk-ant-...
 `);
 }
 
