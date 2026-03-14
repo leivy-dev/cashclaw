@@ -631,6 +631,24 @@ async function handleChat(
     const studySessions = hbState?.totalStudySessions ?? 0;
     const isRunning = hbState?.running ?? false;
 
+    // ウォレット残高を取得（失敗時は "取得失敗" と表示）
+    let walletLine = "- Wallet balance: 取得失敗";
+    try {
+      const wallet = await cli.walletShow();
+      let usdPart = "";
+      try {
+        const priceRes = await fetch(
+          "https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD",
+        );
+        const priceData = (await priceRes.json()) as { USD?: number };
+        if (priceData.USD && wallet.balance) {
+          const usd = (parseFloat(wallet.balance) * priceData.USD).toFixed(2);
+          usdPart = ` (≈ $${usd} USD)`;
+        }
+      } catch { /* ETH価格取得失敗は無視 */ }
+      walletLine = `- Wallet balance: ${wallet.balance ?? "?"} ETH${usdPart} (address: ${wallet.address})`;
+    } catch { /* ウォレット取得失敗は無視 */ }
+
     const knowledgeSection = relevantKnowledge.length > 0
       ? `\n\nYou've learned these insights from self-study:\n${relevantKnowledge.map((k) => `- ${k.insight.slice(0, 200)}`).join("\n")}`
       : "";
@@ -648,9 +666,10 @@ Your specialties: ${specialties}. These are your ONLY areas of expertise — alw
 - Study sessions completed: ${studySessions}
 - Knowledge entries: ${allKnowledge.length}
 - Tasks completed: ${stats.totalTasks}, avg score: ${stats.avgScore}/5
+${walletLine}
 - Tools: quote, decline, submit work, message clients, browse bounties, check wallet, read feedback${personalitySection}
 
-You're chatting with your operator. Be helpful, concise, and direct. Discuss performance, knowledge, tasks, and capabilities. Keep responses grounded in your actual data.${knowledgeSection}`;
+You're chatting with your operator. Be helpful, concise, and direct. Discuss performance, knowledge, tasks, and capabilities. Keep responses grounded in your actual data. When asked about your wallet balance, always report the exact figures above.${knowledgeSection}`;
 
     // Build conversation from history (last 20 messages for context)
     const history = loadChat().slice(-20);
