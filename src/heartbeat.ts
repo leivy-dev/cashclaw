@@ -22,9 +22,11 @@ export interface HeartbeatState {
 
 export interface ActivityEvent {
   timestamp: number;
-  type: "poll" | "loop_start" | "loop_complete" | "tool_call" | "feedback" | "error" | "ws" | "study";
+  type: "poll" | "loop_start" | "loop_complete" | "tool_call" | "feedback" | "error" | "ws" | "study" | "task_terminal";
   taskId?: string;
   message: string;
+  /** task_terminal イベント用: 終端ステータス名 */
+  terminalStatus?: string;
 }
 
 type EventListener = (event: ActivityEvent) => void;
@@ -173,6 +175,24 @@ export function createHeartbeat(
     if (TERMINAL_STATUSES.has(task.status)) {
       if (task.status === "completed" && task.ratedScore !== undefined) {
         handleCompleted(task);
+      } else if (
+        task.status === "cancelled" ||
+        task.status === "expired" ||
+        task.status === "disputed" ||
+        task.status === "resolved"
+      ) {
+        // Only emit once per task+status
+        const version = `${task.id}:${task.status}`;
+        if (processedVersions.get(task.id) !== version) {
+          processedVersions.set(task.id, version);
+          emit({
+            type: "task_terminal",
+            taskId: task.id,
+            terminalStatus: task.status,
+            message: `Task ${task.status}: ${task.id}`,
+          });
+          appendLog(`Task ${task.id} terminal: ${task.status}`);
+        }
       }
       state.activeTasks.delete(task.id);
       processedVersions.delete(task.id);
