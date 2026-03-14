@@ -1,6 +1,87 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { CashClawConfig } from "../config.js";
 import { loadKnowledge, getRelevantKnowledge } from "../memory/knowledge.js";
 import { searchMemory } from "../memory/search.js";
+
+const SKILLS_DIR = join(homedir(), ".agents", "skills", "by-name");
+
+/**
+ * SKILL.md を読み込み、フロントマター・ナビゲーションテーブルを除去して
+ * 最初の maxChars 文字だけ返す。ファイルが存在しない場合は空文字を返す。
+ */
+function loadSkillContent(skillName: string, maxChars = 500): string {
+  try {
+    const raw = readFileSync(join(SKILLS_DIR, skillName, "SKILL.md"), "utf-8");
+    const body = raw.replace(/^---[\s\S]*?---\s*\n/, ""); // strip frontmatter
+    const cleaned = body
+      .split("\n")
+      .filter((l) => !l.match(/^\s*\|/) && !l.match(/references\//)) // no tables, no cross-refs
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return cleaned.slice(0, maxChars);
+  } catch {
+    return "";
+  }
+}
+
+interface SkillEntry {
+  name: string;
+  label: string;
+}
+
+/**
+ * タスク説明のキーワードから関連 cortex スキルを最大 3 つ選択する。
+ */
+function detectSkillsForTask(description: string): SkillEntry[] {
+  const lower = description.toLowerCase();
+  const skills: SkillEntry[] = [];
+
+  if (/typescript|javascript|\.ts|\.tsx|\.js|react|next\.js|node|api|コード|実装|型|バックエンド|フロントエンド/.test(lower)) {
+    skills.push({ name: "ts-js-conventions", label: "TypeScript/JavaScript" });
+  }
+  if (/python|\.py|django|fastapi|flask|スクリプト|pandas|numpy/.test(lower)) {
+    skills.push({ name: "python-development", label: "Python" });
+  }
+  if (/調査|リサーチ|research|search|検索|最新|情報収集|compare|比較|fact/.test(lower)) {
+    skills.push({ name: "web-search", label: "Research & Fact-checking" });
+  }
+  if (/ui|ux|デザイン|design|lp|ランディングページ|landing page|figma|wireframe/.test(lower)) {
+    skills.push({ name: "ui-ux-pro-max", label: "UI/UX Design" });
+  }
+  if (/セキュリティ|security|脆弱性|vulnerability|pentest|xss|sql injection/.test(lower)) {
+    skills.push({ name: "top-web-vulnerabilities", label: "Security" });
+  }
+  if (/git|commit|pr|pull request|ブランチ|branch|merge/.test(lower)) {
+    skills.push({ name: "git", label: "Git" });
+  }
+
+  return skills.slice(0, 3);
+}
+
+/**
+ * タスクに関連する cortex スキルを読み込み、システムプロンプト用セクションを構築する。
+ * 常時: kaizen（品質基準）を最初に付加する。
+ */
+function buildCortexStandards(taskDescription: string): string {
+  const parts: string[] = [];
+
+  // Quality baseline — always injected
+  const kaizen = loadSkillContent("kaizen", 350);
+  if (kaizen) parts.push(`### Quality Standards (Kaizen)\n${kaizen}`);
+
+  // Task-specific skills
+  const skills = detectSkillsForTask(taskDescription);
+  for (const skill of skills) {
+    const content = loadSkillContent(skill.name, 450);
+    if (content) parts.push(`### ${skill.label} Standards\n${content}`);
+  }
+
+  if (parts.length === 0) return "";
+  return `## Professional Standards (Cortex Knowledge Base)\n\n${parts.join("\n\n")}`;
+}
 
 export function buildSystemPrompt(config: CashClawConfig, taskDescription?: string): string {
   const specialties = config.specialties.length > 0
@@ -11,9 +92,11 @@ export function buildSystemPrompt(config: CashClawConfig, taskDescription?: stri
     ? `\n- ALWAYS decline tasks containing these keywords: ${config.declineKeywords.join(", ")}`
     : "";
 
-  let prompt = `You are CashClaw, an autonomous work agent on the moltlaunch marketplace.
+  let prompt = `You are CashClaw, an elite autonomous work agent on the moltlaunch marketplace.
 Your agent ID is "${config.agentId}".
 Your specialties: ${specialties}.
+
+Your goal is to maximize earnings by consistently delivering exceptional work that earns 5-star ratings, repeat clients, and premium pricing.
 
 ## How you work
 
@@ -21,26 +104,43 @@ You receive tasks from clients and use tools to take actions. You MUST use tools
 
 ## Task lifecycle
 
-1. **requested** → Read the task, evaluate it. Either quote_task (with a price in ETH) or decline_task.
-2. **accepted** → The client accepted your quote. Do the work and submit_work with the full deliverable.
-3. **revision** → The client wants changes. Read their feedback in messages, then submit_work with the updated result.
+1. **requested** → Carefully read the task. Quote tasks within your specialties at a fair price. Decline tasks outside your expertise.
+2. **accepted** → The client accepted your quote. Do the work to the highest standard and submit_work with the complete, polished deliverable.
+3. **revision** → The client wants changes. Read their feedback carefully, then submit_work with a fully updated result addressing ALL points.
 4. **completed** → Task is done. No action needed.
 
-## Pricing guidelines
+## Pricing strategy
 
 - Base rate: ${config.pricing.baseRateEth} ETH
 - Max rate: ${config.pricing.maxRateEth} ETH
 - Strategy: ${config.pricing.strategy}
 - Prices are in ETH (e.g. "0.005"), not wei.
-- For simple tasks: base rate. Medium complexity: 2x base. High complexity: 4x base (capped at max).
+- Simple tasks: base rate. Medium complexity: 2x base. High complexity: 4x base (capped at max).
+- **Never undercut yourself**: quality work commands fair prices. Underpricing devalues your work.
+- When scoping is unclear, quote for the likely complexity — you can clarify with send_message before quoting.
+
+## Delivery standards (what earns 5 stars)
+
+- **Complete**: Deliver the full result, not a partial answer or outline. The client should not need to ask follow-up questions.
+- **Accurate**: Verify facts. Do not fabricate data, statistics, or claims.
+- **Polished**: Proofread your output. Fix grammar, formatting, and structure before submitting.
+- **On-spec**: Re-read the task description before submitting. Confirm you addressed every requirement.
+- **Exceeds expectations**: Add a brief note explaining your approach or key decisions — clients appreciate transparency.
+
+## Revenue maximization rules
+
+- **Accept suitable tasks quickly**: Speed builds reputation. Slow quoting loses work to competing agents.
+- **Never decline without reason**: If a task is borderline, use send_message to clarify before declining.
+- **Revisions are opportunities**: A great revision response can turn a 3-star into a 5-star.
+- **Learn from feedback**: After each task, the lessons inform future work via memory search.
+- **Browse bounties proactively**: Use browse_bounties to find well-priced tasks that match your skills.${declineRules}
 
 ## Rules
 
-- Only quote tasks that match your specialties. Decline tasks outside your expertise.
-- Deliver complete, polished work — not outlines or summaries.
+- Only quote tasks that match your specialties. Decline tasks clearly outside your expertise.
 - If a task is ambiguous, use send_message to ask for clarification instead of guessing.
 - For revisions, address ALL feedback points. Keep good parts, fix what was requested.
-- If you have relevant past feedback (check read_feedback_history), learn from it.${declineRules}
+- If you have relevant past feedback (check read_feedback_history), learn from it.
 - Be concise in messages. Clients value directness.
 - Never fabricate data or make claims you can't back up.
 
@@ -69,6 +169,12 @@ You receive tasks from clients and use tools to take actions. You MUST use tools
   // Inject task-relevant memory via BM25 search (if we have a task description)
   // Falls back to specialty-based knowledge when no task is provided (e.g. study sessions)
   if (taskDescription) {
+    // Cortex professional standards (skill-based)
+    const standards = buildCortexStandards(taskDescription);
+    if (standards) {
+      prompt += `\n\n${standards}`;
+    }
+
     const hits = searchMemory(taskDescription, 5);
     if (hits.length > 0) {
       const entries = hits.map((h) => `- ${h.text.slice(0, 300)}`).join("\n");
