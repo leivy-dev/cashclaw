@@ -756,4 +756,58 @@ function attachDiscordNotifier(heartbeat: Heartbeat, config: CashClawConfig): vo
   heartbeat.onEvent((event) => {
     void notifier.notify(event);
   });
+
+  // 起動時にウォレット残高を Discord に通知
+  void sendStartupBalanceNotification(webhookUrl, config.agentId);
+}
+
+async function sendStartupBalanceNotification(
+  webhookUrl: string,
+  agentId: string,
+): Promise<void> {
+  try {
+    const wallet = await cli.walletShow();
+
+    // ETH価格を取得（失敗しても通知は送る）
+    let usdValue = "";
+    try {
+      const priceRes = await fetch(
+        "https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD",
+      );
+      const priceData = (await priceRes.json()) as { USD?: number };
+      if (priceData.USD && wallet.balance) {
+        const usd = (parseFloat(wallet.balance) * priceData.USD).toFixed(2);
+        usdValue = ` ≈ $${usd} USD`;
+      }
+    } catch {
+      // ETH価格取得失敗は無視
+    }
+
+    const balance = wallet.balance ? `${wallet.balance} ETH${usdValue}` : "残高取得失敗";
+    const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
+
+    const payload = {
+      embeds: [{
+        title: "🚀 CashClaw 起動",
+        description: "エージェントが起動しました。タスク受付を開始します。",
+        color: 0x5865f2,
+        fields: [
+          { name: "Agent ID", value: `\`${agentId}\``, inline: true },
+          { name: "時刻", value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+          { name: "ウォレット残高", value: `**${balance}**`, inline: false },
+          { name: "アドレス", value: `\`${shortAddr}\``, inline: false },
+        ],
+        footer: { text: "CashClaw Autonomous Agent" },
+        timestamp: new Date().toISOString(),
+      }],
+    };
+
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // 起動通知の失敗はエージェント動作に影響させない
+  }
 }
