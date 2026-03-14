@@ -15,9 +15,12 @@ const COLORS = {
   error: 0xed4245,         // Red — error
   ws: 0x95a5a6,            // Grey — connectivity
   poll: null,              // No notification for polls
-  tool_call: null,         // No notification for individual tool calls
+  tool_call: 0xf1c40f,     // Gold — used only for claim_bounty
   study: 0x9b59b6,         // Purple — learning
 } as const;
+
+// Tool calls that warrant a Discord notification
+const NOTIFIABLE_TOOLS = new Set(["claim_bounty", "quote_task"]);
 
 export interface DiscordNotifierConfig {
   webhookUrl: string;
@@ -49,6 +52,12 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
   }
 
   async function notify(event: ActivityEvent, extra?: { taskDescription?: string; priceWei?: string; score?: number }): Promise<void> {
+    // For tool_call events, only notify for specific tools
+    if (event.type === "tool_call") {
+      const toolName = event.message.split("(")[0];
+      if (!NOTIFIABLE_TOOLS.has(toolName)) return;
+    }
+
     const color = COLORS[event.type];
     if (color === null || color === undefined) return; // suppress noisy events
 
@@ -87,6 +96,20 @@ export function createDiscordNotifier(cfg: DiscordNotifierConfig) {
       case "study":
         title = "📚 学習セッション";
         break;
+      case "tool_call": {
+        const toolName = event.message.split("(")[0];
+        if (toolName === "claim_bounty") {
+          title = "💰 ETH受領 — バウンティ回収";
+          const success = event.message.includes("→ ok");
+          description = success ? "バウンティのETHを正常に回収しました" : `回収失敗: ${event.message}`;
+        } else if (toolName === "quote_task") {
+          title = "📋 見積もり送信";
+          description = event.message;
+        } else {
+          title = `CashClaw ツール: ${toolName}`;
+        }
+        break;
+      }
       default:
         title = `CashClaw イベント: ${event.type}`;
     }
