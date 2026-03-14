@@ -30,53 +30,109 @@ function loadSkillContent(skillName: string, maxChars = 500): string {
 interface SkillEntry {
   name: string;
   label: string;
+  priority?: number; // 高いほど優先（デフォルト0）
 }
 
 /**
- * タスク説明のキーワードから関連 cortex スキルを最大 3 つ選択する。
+ * タスク説明のキーワードから関連 cortex スキルを選択する。
+ * 最大 6 スキルを返す（優先度順）。
  */
 function detectSkillsForTask(description: string): SkillEntry[] {
   const lower = description.toLowerCase();
   const skills: SkillEntry[] = [];
 
-  if (/typescript|javascript|\.ts|\.tsx|\.js|react|next\.js|node|api|コード|実装|型|バックエンド|フロントエンド/.test(lower)) {
-    skills.push({ name: "ts-js-conventions", label: "TypeScript/JavaScript" });
+  // ── コーディング系 ──
+  if (/typescript|javascript|\.ts|\.tsx|\.js|react|next\.js|vue|node|api|コード|実装|型|バックエンド|フロントエンド|web app/.test(lower)) {
+    skills.push({ name: "ts-js-conventions", label: "TypeScript/JavaScript", priority: 10 });
   }
-  if (/python|\.py|django|fastapi|flask|スクリプト|pandas|numpy/.test(lower)) {
-    skills.push({ name: "python-development", label: "Python" });
+  if (/python|\.py|django|fastapi|flask|スクリプト|pandas|numpy|scikit|機械学習|ml|データ分析|data analysis/.test(lower)) {
+    skills.push({ name: "python-development", label: "Python Development", priority: 10 });
   }
-  if (/調査|リサーチ|research|search|検索|最新|情報収集|compare|比較|fact/.test(lower)) {
-    skills.push({ name: "web-search", label: "Research & Fact-checking" });
-  }
-  if (/ui|ux|デザイン|design|lp|ランディングページ|landing page|figma|wireframe/.test(lower)) {
-    skills.push({ name: "ui-ux-pro-max", label: "UI/UX Design" });
-  }
-  if (/セキュリティ|security|脆弱性|vulnerability|pentest|xss|sql injection/.test(lower)) {
-    skills.push({ name: "top-web-vulnerabilities", label: "Security" });
-  }
-  if (/git|commit|pr|pull request|ブランチ|branch|merge/.test(lower)) {
-    skills.push({ name: "git", label: "Git" });
+  if (/git|commit|pr|pull request|ブランチ|branch|merge|バージョン管理/.test(lower)) {
+    skills.push({ name: "git", label: "Git & Version Control", priority: 5 });
   }
 
-  return skills.slice(0, 3);
+  // ── 調査・リサーチ系 ──
+  if (/調査|リサーチ|research|search|検索|最新|情報収集|compare|比較|fact|verify|事実確認|ソース|source/.test(lower)) {
+    skills.push({ name: "web-search", label: "Research & Fact-checking", priority: 10 });
+  }
+  if (/youtube|動画|video|transcript|字幕|要約.*動画|動画.*要約/.test(lower)) {
+    skills.push({ name: "youtube-transcript", label: "YouTube & Video Content", priority: 8 });
+  }
+
+  // ── ライティング・コンテンツ系 ──
+  if (/ライティング|writing|文章|記事|ブログ|blog|コンテンツ|content|コピー|copy|seo|プレスリリース|press release/.test(lower)) {
+    skills.push({ name: "prompt-engineering", label: "Writing & Prompting Excellence", priority: 9 });
+  }
+  if (/日本語|japanese|翻訳.*日本|日本.*翻訳|ja:|jp:|和訳|英訳|自然な日本語/.test(lower)) {
+    skills.push({ name: "natural-japanese", label: "Natural Japanese Writing", priority: 9 });
+  }
+  if (/翻訳|translation|translate|localization|ローカライズ|英語.*日本語|日本語.*英語|lang/.test(lower)) {
+    skills.push({ name: "natural-japanese", label: "Natural Japanese Writing", priority: 8 });
+  }
+  if (/要約|summarize|summary|まとめ|サマリー|digest|tl;dr/.test(lower)) {
+    skills.push({ name: "context-window-management", label: "Summarization & Synthesis", priority: 7 });
+  }
+
+  // ── デザイン・プレゼン系 ──
+  if (/ui|ux|デザイン|design|lp|ランディングページ|landing page|figma|wireframe|mockup|モックアップ/.test(lower)) {
+    skills.push({ name: "ui-ux-pro-max", label: "UI/UX Design", priority: 9 });
+  }
+  if (/pptx|powerpoint|スライド|slide|プレゼン|presentation|deck/.test(lower)) {
+    skills.push({ name: "pptx-official", label: "Presentation & Slides", priority: 9 });
+  }
+  if (/lp|ランディングページ|landing page|日本語.*lp|lp.*日本語/.test(lower)) {
+    skills.push({ name: "japanese-lp-design", label: "Japanese LP Design", priority: 10 });
+  }
+
+  // ── アイデア・分析系 ──
+  if (/アイデア|brainstorm|ブレスト|企画|plan|構想|creative|クリエイティブ|考え|提案/.test(lower)) {
+    skills.push({ name: "brainstorming", label: "Brainstorming & Ideation", priority: 8 });
+  }
+  if (/分析|analysis|analyze|データ|data|chart|グラフ|insight|レポート|report|統計|statistics/.test(lower)) {
+    skills.push({ name: "python-development", label: "Data Analysis", priority: 7 });
+  }
+  if (/自動化|automation|automate|スクレイピング|scraping|bot|ボット|batch|バッチ/.test(lower)) {
+    skills.push({ name: "autonomous-agents", label: "Automation & Agent Patterns", priority: 8 });
+  }
+
+  // 重複排除（同一スキル名があれば高優先のものだけ残す）
+  const seen = new Map<string, SkillEntry>();
+  for (const s of skills) {
+    const existing = seen.get(s.name);
+    if (!existing || (s.priority ?? 0) > (existing.priority ?? 0)) {
+      seen.set(s.name, s);
+    }
+  }
+
+  // 優先度降順でソートして最大 6 スキルを返す
+  return [...seen.values()]
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+    .slice(0, 6);
 }
 
 /**
  * タスクに関連する cortex スキルを読み込み、システムプロンプト用セクションを構築する。
- * 常時: kaizen（品質基準）を最初に付加する。
+ * 常時注入: kaizen（品質基準）+ prompt-engineering（汎用ライティング力）
  */
 function buildCortexStandards(taskDescription: string): string {
   const parts: string[] = [];
 
-  // Quality baseline — always injected
-  const kaizen = loadSkillContent("kaizen", 350);
+  // 常時注入 — 品質ベースライン
+  const kaizen = loadSkillContent("kaizen", 500);
   if (kaizen) parts.push(`### Quality Standards (Kaizen)\n${kaizen}`);
 
-  // Task-specific skills
+  // 常時注入 — プロンプト・表現力（全タスクで有効）
+  const promptEng = loadSkillContent("prompt-engineering", 400);
+  if (promptEng) parts.push(`### Communication & Clarity\n${promptEng}`);
+
+  // タスク固有スキル
   const skills = detectSkillsForTask(taskDescription);
   for (const skill of skills) {
-    const content = loadSkillContent(skill.name, 450);
-    if (content) parts.push(`### ${skill.label} Standards\n${content}`);
+    // 既に常時注入したスキルは二重注入しない
+    if (skill.name === "prompt-engineering") continue;
+    const content = loadSkillContent(skill.name, 700);
+    if (content) parts.push(`### ${skill.label}\n${content}`);
   }
 
   if (parts.length === 0) return "";
