@@ -192,7 +192,7 @@ async function callClaude(systemPrompt: string, userPrompt: string, model: strin
     "--no-session-persistence",                  // agent-gateway 準拠: セッション保存無効
     "--model", model,
   ];
-  if (systemPrompt) args.push("--system-prompt", systemPrompt);
+  if (systemPrompt) args.push("--append-system-prompt", systemPrompt);
   args.push("--", userPrompt);
   return runCli(args, CLI_TIMEOUT_MS);
 }

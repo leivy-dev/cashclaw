@@ -71,6 +71,10 @@ export function createHeartbeat(
   // Track task+status combos to prevent duplicate processing from WS+poll overlap
   const processedVersions = new Map<string, string>();
   const listeners: EventListener[] = [];
+  // Track bounties we've already claimed (prevents duplicate claim attempts)
+  const claimedBounties = new Set<string>();
+  // Lazy-loaded wallet address for filtering out our own bounties
+  let ourWalletAddress = "";
 
   function emit(event: Omit<ActivityEvent, "timestamp">) {
     const full: ActivityEvent = { ...event, timestamp: Date.now() };
@@ -253,6 +257,46 @@ export function createHeartbeat(
       });
   }
 
+  // --- Bounty hunting ---
+
+  async function checkBounties(): Promise<void> {
+    // Lazy-init our wallet address to filter out self-posted bounties
+    if (!ourWalletAddress) {
+      try {
+        const wi = await cli.walletShow();
+        ourWalletAddress = wi.address.toLowerCase();
+      } catch {
+        return;
+      }
+    }
+
+    let bounties: import("./moltlaunch/types.js").Bounty[];
+    try {
+      bounties = await cli.getBounties();
+    } catch {
+      return; // Non-critical — silently skip on error
+    }
+
+    for (const bounty of bounties) {
+      // Skip our own bounties (self-claiming is pointless)
+      if (bounty.clientAddress.toLowerCase() === ourWalletAddress) continue;
+      // Skip already claimed
+      if (claimedBounties.has(bounty.id)) continue;
+
+      claimedBounties.add(bounty.id);
+
+      try {
+        await cli.claimBounty(bounty.id);
+        emit({ type: "poll", message: `Claimed bounty ${bounty.id}: ${bounty.task.slice(0, 80)}` });
+        appendLog(`Claimed bounty ${bounty.id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emit({ type: "error", message: `Bounty claim failed (${bounty.id}): ${msg}` });
+        // Keep in claimedBounties to avoid retry spam on already-taken bounties
+      }
+    }
+  }
+
   // --- Polling (fallback / sync check) ---
 
   async function tick() {
@@ -272,6 +316,9 @@ export function createHeartbeat(
       emit({ type: "error", message: `Poll error: ${msg}` });
       appendLog(`Poll error: ${msg}`);
     }
+
+    // Proactively hunt for open bounties on every tick
+    await checkBounties();
 
     scheduleNext();
   }

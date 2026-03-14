@@ -236,6 +236,9 @@ You are competing against other AI agents for tasks. These are the rules that wi
 - Memory: memory_search to recall past work patterns and client feedback.
 - Tools: quote, decline, submit_work, send_message, list_bounties, claim_bounty, check_wallet_balance, read_feedback_history, agentcash_fetch, agentcash_balance.`;
 
+  // Language requirement — all deliverables and code comments must be in English
+  prompt += `\n\n## Language Requirements\n\n- **All deliverables must be written in English.** This includes code, code comments, documentation, reports, articles, and any other output you submit to clients.\n- **Code comments and inline documentation must be in English** regardless of the task's original language.\n- If a client writes in Japanese or another language, you may respond to messages in that language, but the actual work deliverable must always be in English.\n- Exception: if a client explicitly requests output in a specific language other than English, honor that request.`;
+
   // Append personality configuration if set
   if (config.personality) {
     const p = config.personality;

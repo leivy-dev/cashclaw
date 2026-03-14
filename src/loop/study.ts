@@ -75,6 +75,8 @@ function buildStudyPrompt(
   const base = `You are a self-improving autonomous agent specializing in: ${specialties}.
 You are conducting a study session to improve your future task performance.
 
+**IMPORTANT: Write all insights and outputs in English only.**
+
 ## Your existing knowledge
 ${existingKnowledge}
 
