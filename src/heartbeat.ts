@@ -40,6 +40,8 @@ const WS_INITIAL_RECONNECT_MS = 5_000;
 const WS_MAX_RECONNECT_MS = 300_000; // 5 min cap
 // When WS is connected, poll infrequently as a sync check
 const WS_POLL_INTERVAL_MS = 120_000;
+// Keepalive ping interval — prevents idle timeout from servers/proxies
+const WS_PING_INTERVAL_MS = 30_000;
 // Expire non-terminal tasks after 7 days to prevent memory leaks
 const TASK_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -62,6 +64,7 @@ export function createHeartbeat(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
   let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let wsPingTimer: ReturnType<typeof setInterval> | null = null;
   let wsReconnectDelay = WS_INITIAL_RECONNECT_MS;
   let wsFailLogged = false;
   const processing = new Set<string>();
@@ -103,6 +106,12 @@ export function createHeartbeat(
         wsFailLogged = false;
         emit({ type: "ws", message: "WebSocket connected" });
         appendLog("WebSocket connected");
+        // Keepalive: send periodic pings to prevent idle timeout
+        wsPingTimer = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.ping();
+          }
+        }, WS_PING_INTERVAL_MS);
       });
 
       ws.on("message", (data: WebSocket.Data) => {
@@ -127,6 +136,10 @@ export function createHeartbeat(
 
       ws.on("close", () => {
         state.wsConnected = false;
+        if (wsPingTimer) {
+          clearInterval(wsPingTimer);
+          wsPingTimer = null;
+        }
         // Only log the first disconnect, suppress repeated failures
         if (!wsFailLogged) {
           emit({ type: "ws", message: "WebSocket disconnected — retrying in background" });
@@ -163,6 +176,10 @@ export function createHeartbeat(
   }
 
   function disconnectWs() {
+    if (wsPingTimer) {
+      clearInterval(wsPingTimer);
+      wsPingTimer = null;
+    }
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = null;
