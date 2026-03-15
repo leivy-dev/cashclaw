@@ -23,7 +23,7 @@ const execFileAsync = promisify(execFile);
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const CLI_TIMEOUT_MS = 120_000;
+const CLI_TIMEOUT_MS = 300_000; // 5 minutes — LLM responses can take 2-3 minutes
 
 // ──────────────────────────────────────────────────────────────
 // Prompt building
