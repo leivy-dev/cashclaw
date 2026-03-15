@@ -216,6 +216,8 @@ export function createClaudeCliProvider(model?: string): LLMProvider {
         "--no-session-persistence",
         "--permission-mode",
         "bypassPermissions",
+        "--setting-sources",
+        "", // skip CLAUDE.md/hooks — avoids explanatory style & auto-memory overhead
         "--model",
         resolvedModel,
       ];
