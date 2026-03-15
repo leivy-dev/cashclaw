@@ -399,6 +399,16 @@ export function createHeartbeat(
   }
 
   let studying = false;
+  let consecutiveStudyErrors = 0;
+  // Backoff: 1min → 2min → 4min → 8min → cap at 30min
+  const STUDY_BACKOFF_INTERVALS = [
+    60_000, 120_000, 240_000, 480_000, 1_800_000,
+  ];
+
+  function getStudyBackoffMs(): number {
+    const idx = Math.min(consecutiveStudyErrors, STUDY_BACKOFF_INTERVALS.length - 1);
+    return STUDY_BACKOFF_INTERVALS[idx] ?? 60_000;
+  }
 
   async function maybeStudy() {
     if (!config.learningEnabled) return;
@@ -411,7 +421,8 @@ export function createHeartbeat(
     );
     if (hasUrgent) return;
 
-    if (Date.now() - state.lastStudyTime < config.studyIntervalMs) return;
+    const backoffMs = consecutiveStudyErrors > 0 ? getStudyBackoffMs() : config.studyIntervalMs;
+    if (Date.now() - state.lastStudyTime < backoffMs) return;
 
     studying = true;
     emit({ type: "study", message: "Starting study session..." });
@@ -421,6 +432,7 @@ export function createHeartbeat(
       const result = await runStudySession(llm, config);
       state.lastStudyTime = Date.now();
       state.totalStudySessions++;
+      consecutiveStudyErrors = 0; // reset on success
 
       emit({
         type: "study",
@@ -429,9 +441,12 @@ export function createHeartbeat(
       appendLog(`Study session complete: ${result.topic} — ${result.insight.slice(0, 100)}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      emit({ type: "error", message: `Study error: ${msg}` });
-      appendLog(`Study error: ${msg}`);
-      // Avoid retrying immediately on failure
+      consecutiveStudyErrors++;
+      const nextBackoffMs = getStudyBackoffMs();
+      emit({ type: "error", message: `Study error (attempt ${consecutiveStudyErrors}): ${msg}` });
+      appendLog(`Study error (attempt ${consecutiveStudyErrors}): ${msg}`);
+      appendLog(`Auto-repair: next retry in ${nextBackoffMs / 1000}s (backoff)`);
+      // Avoid retrying immediately on failure — use exponential backoff
       state.lastStudyTime = Date.now();
     } finally {
       studying = false;
