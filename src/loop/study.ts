@@ -69,9 +69,9 @@ function buildStudyPrompt(
     .map((k) => {
       // Strip markdown/decorative formatting so the LLM doesn't replicate it verbosely
       const cleanInsight = k.insight
-        .replace(/`[★─\s-]+`/g, "")
-        .replace(/^#+\s*/gm, "")
-        .replace(/\*\*/g, "")
+        .replace(/`[^`]*`/g, "")   // remove all backtick-enclosed spans (★ Insight headers)
+        .replace(/^#+\s*/gm, "")   // remove markdown headings
+        .replace(/\*\*/g, "")      // remove bold markers
         .trim()
         .slice(0, 150);
       return `- [${k.topic}] ${cleanInsight}`;
