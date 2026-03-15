@@ -217,7 +217,7 @@ export function createClaudeCliProvider(model?: string): LLMProvider {
         "--permission-mode",
         "bypassPermissions",
         "--setting-sources",
-        "", // skip CLAUDE.md/hooks — avoids explanatory style & auto-memory overhead
+        "local", // skip user CLAUDE.md/hooks — avoids explanatory style & auto-memory overhead
         "--model",
         resolvedModel,
       ];
