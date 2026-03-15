@@ -8,8 +8,7 @@
  *   - システムプロンプトにツール定義と JSON 出力形式を追加
  *   - モデルがツール呼び出しを JSON で出力 → パース → 実行 → 結果を追加して再呼び出し
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import type {
   LLMProvider,
   LLMMessage,
@@ -18,8 +17,6 @@ import type {
   ContentBlock,
   ToolUseBlock,
 } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -198,6 +195,43 @@ function buildResponse(text: string, hasTools: boolean): LLMResponse {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Process execution (spawn-based to avoid stdin hang)
+// ──────────────────────────────────────────────────────────────
+
+function spawnClaude(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(CLAUDE_BIN, args, {
+      stdio: ["ignore", "pipe", "pipe"], // stdin=ignore prevents hang
+      env: { ...process.env },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      reject(new Error(`Claude CLI timed out after ${CLI_TIMEOUT_MS / 1000}s`));
+    }, CLI_TIMEOUT_MS);
+
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`Claude CLI exited with code ${code}: ${stderr.slice(0, 500)}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+// ──────────────────────────────────────────────────────────────
 // Provider factory
 // ──────────────────────────────────────────────────────────────
 
@@ -228,13 +262,7 @@ export function createClaudeCliProvider(model?: string): LLMProvider {
 
       args.push("--", userPrompt);
 
-      const { stdout } = await execFileAsync(CLAUDE_BIN, args, {
-        timeout: CLI_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-        env: { ...process.env },
-        input: "", // close stdin immediately so claude CLI doesn't hang waiting for EOF
-      });
-
+      const stdout = await spawnClaude(args);
       return buildResponse(stdout, tools.length > 0);
     },
   };
