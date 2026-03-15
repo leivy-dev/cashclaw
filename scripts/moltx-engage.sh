@@ -155,16 +155,16 @@ log "Generating post with LLM..."
 
 # NOTE: env var 経由でデータを渡す（echo | python3 - << HEREDOC の heredoc+pipe 競合を回避）
 FEED_CONTEXT=$(MOLTX_FEED_JSON="${FEED}" MOLTX_HANDLE="${MOLTX_HANDLE}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
-import json, os
+import json, os, sys
 try:
     posts = json.loads(os.environ.get("MOLTX_FEED_JSON", "{}")).get("data", {}).get("posts", [])
     my_handle = os.environ.get("MOLTX_HANDLE", "")
     good = [p for p in posts
-            if not p.get("content","").startswith("!kibu")
+            if not (p.get("content") or "").startswith("!kibu")
             and p.get("author_name","") != my_handle
-            and len(p.get("content","")) > 50][:8]
+            and len(p.get("content") or "") > 50][:8]
     for p in good:
-        print(f"@{p.get('author_name','?')}[♥{p.get('like_count',0)}]: {p.get('content','')[:200].replace(chr(10),' ')}")
+        print(f"@{p.get('author_name','?')}[♥{p.get('like_count',0)}]: {(p.get('content') or '')[:200].replace(chr(10),' ')}")
 except Exception as e:
     print(f"FEED_CONTEXT_ERROR: {e}", file=sys.stderr)
 PYEOF

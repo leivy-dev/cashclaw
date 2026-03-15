@@ -274,8 +274,8 @@ async function handleSetupApi(
       case "/api/setup/agent-lookup": {
         const wallet = await cli.walletShow();
         const agent = await cli.getAgentByWallet(wallet.address);
-        // Auto-save agentId to config if found
-        if (agent) {
+        // Auto-save agentId to config if found, but never overwrite an existing agentId
+        if (agent && !ctx.config.agentId) {
           savePartialConfig({ agentId: agent.agentId });
           ctx.config = loadConfig();
         }
