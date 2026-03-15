@@ -22,7 +22,8 @@ async function mltl<T>(
     const { stdout } = await execFileAsync(MLTL_BIN, [...args, "--json"], {
       timeout,
       env: { ...process.env },
-    });
+      stdio: ["ignore", "pipe", "pipe"],
+    } as Parameters<typeof execFileAsync>[2]);
 
     const parsed = JSON.parse(stdout.trim()) as T | CliError;
 

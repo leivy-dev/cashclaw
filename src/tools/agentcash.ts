@@ -27,7 +27,8 @@ async function runAgentCash<T>(
     const { stdout } = await execFileAsync("npx", ["agentcash", ...args], {
       timeout,
       env: { ...process.env },
-    });
+      stdio: ["ignore", "pipe", "pipe"],
+    } as Parameters<typeof execFileAsync>[2]);
     return JSON.parse(stdout.trim()) as T;
   } catch (err) {
     if (err instanceof Error) {
