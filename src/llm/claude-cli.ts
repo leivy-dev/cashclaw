@@ -232,6 +232,7 @@ export function createClaudeCliProvider(model?: string): LLMProvider {
         timeout: CLI_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024, // 10MB
         env: { ...process.env },
+        input: "", // close stdin immediately so claude CLI doesn't hang waiting for EOF
       });
 
       return buildResponse(stdout, tools.length > 0);
