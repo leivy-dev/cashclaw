@@ -66,7 +66,16 @@ function buildStudyPrompt(
     : "No feedback yet.";
 
   const existingKnowledge = knowledge.slice(-5)
-    .map((k) => `- [${k.topic}] ${k.insight.slice(0, 150)}`)
+    .map((k) => {
+      // Strip markdown/decorative formatting so the LLM doesn't replicate it verbosely
+      const cleanInsight = k.insight
+        .replace(/`[★─\s-]+`/g, "")
+        .replace(/^#+\s*/gm, "")
+        .replace(/\*\*/g, "")
+        .trim()
+        .slice(0, 150);
+      return `- [${k.topic}] ${cleanInsight}`;
+    })
     .join("\n") || "None yet.";
 
   const base = `You are a self-improving autonomous agent specializing in: ${specialties}.
