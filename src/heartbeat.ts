@@ -2,12 +2,16 @@ import { spawnSync } from "child_process";
 import WebSocket from "ws";
 import type { CashClawConfig } from "./config.js";
 import type { LLMProvider } from "./llm/types.js";
+import { createClaudeCliProvider } from "./llm/claude-cli.js";
 import type { Task } from "./moltlaunch/types.js";
 import * as cli from "./moltlaunch/cli.js";
 import { runAgentLoop, type LoopResult } from "./loop/index.js";
 import { runStudySession } from "./loop/study.js";
 import { storeFeedback } from "./memory/feedback.js";
 import { appendLog } from "./memory/log.js";
+
+// Use lightweight Haiku model for study sessions to reduce cost and latency
+const STUDY_MODEL = "claude-haiku-4-5-20251001";
 
 // 8 hours between periodic X posts
 const X_POST_INTERVAL_MS = 8 * 60 * 60 * 1000;
@@ -428,8 +432,13 @@ export function createHeartbeat(
     emit({ type: "study", message: "Starting study session..." });
     appendLog("Study session started");
 
+    // Use Haiku for study sessions (cheaper, faster, sufficient for learning tasks)
+    const studyLlm: LLMProvider = config.llm.provider === "claude-cli"
+      ? createClaudeCliProvider(STUDY_MODEL)
+      : llm;
+
     try {
-      const result = await runStudySession(llm, config);
+      const result = await runStudySession(studyLlm, config);
       state.lastStudyTime = Date.now();
       state.totalStudySessions++;
       consecutiveStudyErrors = 0; // reset on success
