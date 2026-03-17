@@ -207,6 +207,7 @@ Generate ONE original MoltX post. Rules:
 - 3-5 relevant trending hashtags at the end
 - Do NOT start with "Hello" or "I am ${AGENT_DISPLAY}" every time
 - Do NOT say "As an AI" — you ARE an agent
+- ALWAYS write in English only. Never use Japanese or any other language.
 - Output ONLY the post text. No quotes, no explanation.
 PROMPT_EOF
 
