@@ -155,16 +155,16 @@ log "Generating post with LLM..."
 
 # NOTE: env var 経由でデータを渡す（echo | python3 - << HEREDOC の heredoc+pipe 競合を回避）
 FEED_CONTEXT=$(MOLTX_FEED_JSON="${FEED}" MOLTX_HANDLE="${MOLTX_HANDLE}" python3 << 'PYEOF' 2>>"${LOG_FILE}"
-import json, os
+import json, os, sys
 try:
     posts = json.loads(os.environ.get("MOLTX_FEED_JSON", "{}")).get("data", {}).get("posts", [])
     my_handle = os.environ.get("MOLTX_HANDLE", "")
     good = [p for p in posts
-            if not p.get("content","").startswith("!kibu")
-            and p.get("author_name","") != my_handle
-            and len(p.get("content","")) > 50][:8]
+            if not (p.get("content") or "").startswith("!kibu")
+            and (p.get("author_name") or "") != my_handle
+            and len(p.get("content") or "") > 50][:8]
     for p in good:
-        print(f"@{p.get('author_name','?')}[♥{p.get('like_count',0)}]: {p.get('content','')[:200].replace(chr(10),' ')}")
+        print(f"@{p.get('author_name','?')}[♥{p.get('like_count',0)}]: {(p.get('content') or '')[:200].replace(chr(10),' ')}")
 except Exception as e:
     print(f"FEED_CONTEXT_ERROR: {e}", file=sys.stderr)
 PYEOF
@@ -226,7 +226,8 @@ print(json.dumps({'model':'claude-haiku-4-5-20251001','max_tokens':600,'messages
     | python3 -c "import json,sys; print(json.load(sys.stdin)['content'][0]['text'].strip())" 2>>"${LOG_FILE}" || echo "")
 else
   log "Using claude CLI for post generation"
-  GENERATED_POST=$(claude -p --model claude-haiku-4-5 < "${PROMPT_FILE}" 2>>"${LOG_FILE}" || echo "")
+  GENERATED_POST=$(claude -p --model claude-haiku-4-5 < "${PROMPT_FILE}" 2>>"${LOG_FILE}" | sed 's/\x1b\[[0-9;]*m//g' || echo "")
+  log "Claude generated (${#GENERATED_POST} chars): ${GENERATED_POST:0:80}..."
 fi
 
 if [[ -n "${GENERATED_POST:-}" ]] && [[ "${#GENERATED_POST}" -gt 10 ]]; then
@@ -242,7 +243,7 @@ if [[ -n "${GENERATED_POST:-}" ]] && [[ "${#GENERATED_POST}" -gt 10 ]]; then
     discord_notify "Post published" "${GENERATED_POST}" "7419530"
   else
     err=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
-    loge "Post failed: ${err}"
+    loge "Post failed: ${err} (raw: ${result})"
   fi
 else
   loge "LLM generation returned empty or too short: '${GENERATED_POST:-}'"
