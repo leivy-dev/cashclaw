@@ -45,8 +45,8 @@ const TERMINAL_STATUSES = new Set([
 const WS_URL = "wss://api.moltlaunch.com/ws";
 const WS_INITIAL_RECONNECT_MS = 5_000;
 const WS_MAX_RECONNECT_MS = 300_000; // 5 min cap
-// When WS is connected, poll infrequently as a sync check
-const WS_POLL_INTERVAL_MS = 120_000;
+// When WS is connected, poll as a sync check (60s to catch tasks WS might miss)
+const WS_POLL_INTERVAL_MS = 60_000;
 // Keepalive ping to prevent proxy/server idle timeout
 const WS_PING_INTERVAL_MS = 20_000;
 // If no pong within this window after a ping, assume connection is dead
@@ -180,6 +180,15 @@ export function createHeartbeat(
           wsFailLogged = true;
         }
         scheduleWsReconnect();
+        // Immediately poll to catch any tasks that arrived while WS was up
+        // (WS_POLL_INTERVAL_MS is 60s — a disconnect means we may have missed tasks)
+        if (state.running) {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          void tick();
+        }
       });
 
       ws.on("error", (err: Error) => {
@@ -308,7 +317,27 @@ export function createHeartbeat(
       appendLog(`Poll error: ${msg}`);
     }
 
+    // Check and auto-claim open bounties on every poll
+    void checkBounties();
+
     scheduleNext();
+  }
+
+  async function checkBounties() {
+    try {
+      const bounties = await cli.getBounties();
+      for (const bounty of bounties) {
+        try {
+          await cli.claimBounty(bounty.id, "I can complete this task.");
+          emit({ type: "poll", message: `Bounty claimed: ${bounty.id}` });
+          appendLog(`Bounty claimed: ${bounty.id}`);
+        } catch {
+          // Ignore claim failures (already claimed, etc.)
+        }
+      }
+    } catch {
+      // Bounty check is best-effort — don't let it affect the main poll loop
+    }
   }
 
   function handleCompleted(task: Task) {
