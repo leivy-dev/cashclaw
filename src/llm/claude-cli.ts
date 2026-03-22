@@ -48,13 +48,7 @@ You have access to the following tools. To use a tool, output a JSON block on it
 {"action":"tool_use","name":"<tool_name>","input":{<parameters>}}
 \`\`\`
 
-When you are finished (no more tool calls needed), output:
-
-\`\`\`json
-{"action":"end_turn"}
-\`\`\`
-
-Then provide your final response as plain text after the JSON block.
+When all required tool calls are complete, provide your final response as plain text (no JSON needed to conclude).
 
 Tools:
 \`\`\`json
@@ -89,9 +83,18 @@ function serializeMessages(messages: LLMMessage[], tools: ToolDefinition[]): str
 
   if (tools.length > 0) {
     parts.push(buildToolsInstructions(tools));
-    parts.push(
-      "[User]: Continue. If you need to use a tool, output the JSON block. Otherwise output end_turn JSON and your final response.",
-    );
+
+    // Detect whether the task context requires immediate tool use (accepted/revision)
+    const hasActionRequired = parts.some((p) => p.includes("ACTION REQUIRED:"));
+    if (hasActionRequired) {
+      parts.push(
+        "[User]: ACTION REQUIRED: You MUST use a tool now. Output a tool_use JSON block — do NOT respond with plain text only. For accepted tasks, call submit_work with the complete deliverable.",
+      );
+    } else {
+      parts.push(
+        "[User]: Continue. Use tools by outputting tool_use JSON blocks as needed, then provide your final response as plain text.",
+      );
+    }
   }
 
   return parts.join("\n\n");
@@ -119,20 +122,99 @@ interface EndTurnAction {
 
 type ParsedAction = ToolUseAction | EndTurnAction;
 
+/**
+ * ```json ... ``` ブロックからブレース深さトラッキングで JSON オブジェクトを抽出する。
+ * result フィールドに埋め込みコードブロック（```typescript 等）が含まれる場合でも
+ * 正規表現の lazy match による誤終端を防ぐ。
+ */
+function extractJsonBlocks(text: string): Array<{ json: string; fullMatch: string }> {
+  const results: Array<{ json: string; fullMatch: string }> = [];
+  const MARKER = "```json";
+  let searchFrom = 0;
+
+  while (searchFrom < text.length) {
+    const markerStart = text.indexOf(MARKER, searchFrom);
+    if (markerStart === -1) break;
+
+    // マーカー直後の空白・改行をスキップ
+    let i = markerStart + MARKER.length;
+    while (i < text.length && (text[i] === " " || text[i] === "\r" || text[i] === "\n")) {
+      i++;
+    }
+
+    // JSON オブジェクトは '{' で始まるはず
+    if (i >= text.length || text[i] !== "{") {
+      searchFrom = markerStart + MARKER.length;
+      continue;
+    }
+
+    // ブレース深さトラッキングで JSON オブジェクトの終端を検索
+    const jsonStart = i;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let jsonEnd = -1;
+
+    for (let j = jsonStart; j < text.length; j++) {
+      const ch = text[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\" && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (!inString) {
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            jsonEnd = j;
+            break;
+          }
+        }
+      }
+    }
+
+    if (jsonEnd === -1) {
+      searchFrom = markerStart + MARKER.length;
+      continue;
+    }
+
+    const jsonStr = text.slice(jsonStart, jsonEnd + 1);
+
+    // 終端の ``` を探して fullMatch を決定
+    const closingIdx = text.indexOf("```", jsonEnd + 1);
+    const fullMatchEnd = closingIdx !== -1 ? closingIdx + 3 : jsonEnd + 1;
+    const fullMatch = text.slice(markerStart, fullMatchEnd);
+
+    results.push({ json: jsonStr, fullMatch });
+    searchFrom = fullMatchEnd;
+  }
+
+  return results;
+}
+
 function parseActions(text: string): { actions: ParsedAction[]; plainText: string } {
   const actions: ParsedAction[] = [];
   let plainText = text;
 
-  // JSON ブロックを抽出（```json ... ``` または 行頭の { } ）
-  const jsonBlockRe = /```json\s*([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
+  // ```json ... ``` ブロックを抽出（ブレース深さパーサー使用）
+  const blocks = extractJsonBlocks(text);
 
-  while ((match = jsonBlockRe.exec(text)) !== null) {
+  for (const block of blocks) {
+    // claude CLI が XML タグ（</parameter> 等）を末尾に漏らすことがある — 除去してからパース
+    const content = block.json.replace(/(<\/?\w+(?:\s[^>]*)?>)+\s*$/, "").trim();
     try {
-      const parsed = JSON.parse(match[1].trim()) as ParsedAction;
+      const parsed = JSON.parse(content) as ParsedAction;
       if (parsed.action === "tool_use" || parsed.action === "end_turn") {
         actions.push(parsed);
-        plainText = plainText.replace(match[0], "").trim();
+        plainText = plainText.replace(block.fullMatch, "").trim();
       }
     } catch {
       // パース失敗は無視
@@ -142,6 +224,7 @@ function parseActions(text: string): { actions: ParsedAction[]; plainText: strin
   // インライン JSON も試みる（```なし）
   if (actions.length === 0) {
     const inlineRe = /\{[^{}]*"action"\s*:\s*"(tool_use|end_turn)"[^{}]*\}/g;
+    let match: RegExpExecArray | null;
     while ((match = inlineRe.exec(text)) !== null) {
       try {
         const parsed = JSON.parse(match[0]) as ParsedAction;
