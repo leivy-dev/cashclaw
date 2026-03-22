@@ -1,5 +1,6 @@
 import type { Tool } from "./types.js";
 import * as cli from "../moltlaunch/cli.js";
+import { scanForSensitiveData } from "../security/scanner.js";
 
 function requireString(input: Record<string, unknown>, key: string): string {
   const val = input[key];
@@ -84,6 +85,10 @@ export const submitWork: Tool = {
   async execute(input) {
     const taskId = requireString(input, "task_id");
     const result = requireString(input, "result");
+    const scan = scanForSensitiveData(result);
+    if (scan.blocked) {
+      return { success: false, data: scan.reason ?? "Blocked: sensitive data detected in deliverable" };
+    }
     await cli.submitWork(taskId, result);
     return { success: true, data: `Submitted work for task ${taskId}` };
   },
@@ -105,6 +110,10 @@ export const sendMessage: Tool = {
   async execute(input) {
     const taskId = requireString(input, "task_id");
     const content = requireString(input, "content");
+    const scan = scanForSensitiveData(content);
+    if (scan.blocked) {
+      return { success: false, data: scan.reason ?? "Blocked: sensitive data detected in message" };
+    }
     await cli.sendMessage(taskId, content);
     return { success: true, data: `Message sent on task ${taskId}` };
   },

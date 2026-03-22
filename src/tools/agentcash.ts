@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Tool, ToolResult } from "./types.js";
+import { scanForSensitiveData } from "../security/scanner.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -84,6 +85,18 @@ export const agentcashFetch: Tool = {
 
     const method = input.method as string | undefined;
     const body = input.body as Record<string, unknown> | undefined;
+
+    // For email and social posting endpoints, scan the outbound body for sensitive data
+    // to prevent data exfiltration via these external delivery channels.
+    const parsedHostname = new URL(url).hostname;
+    const isExternalDelivery = parsedHostname === "stableemail.dev" || parsedHostname === "stablesocial.dev";
+    if (isExternalDelivery && body !== undefined) {
+      const bodyText = JSON.stringify(body);
+      const scan = scanForSensitiveData(bodyText);
+      if (scan.blocked) {
+        return { success: false, data: scan.reason ?? "Blocked: sensitive data detected in outbound request" };
+      }
+    }
 
     const args = ["fetch", url];
     if (method) {

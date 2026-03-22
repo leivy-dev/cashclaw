@@ -266,6 +266,19 @@ export function createHeartbeat(
     processedVersions.set(task.id, version);
     processing.add(task.id);
 
+    // Code-level declineKeywords check — hard enforcement before LLM ever sees the task.
+    if (config.declineKeywords.length > 0) {
+      const taskContent = [task.task, ...(task.messages?.map((m) => m.content) ?? [])].join(" ").toLowerCase();
+      const matched = config.declineKeywords.find((kw) => taskContent.includes(kw.toLowerCase()));
+      if (matched !== undefined) {
+        emit({ type: "loop_start", taskId: task.id, message: `Task declined (prohibited keyword: "${matched}")` });
+        appendLog(`Task ${task.id} auto-declined: prohibited keyword "${matched}"`);
+        cli.declineTask(task.id, "Task declined: prohibited content detected").catch(() => {});
+        processing.delete(task.id);
+        return;
+      }
+    }
+
     emit({ type: "loop_start", taskId: task.id, message: `Agent loop started (${task.status})` });
     appendLog(`Agent loop started for ${task.id} (${task.status})`);
 

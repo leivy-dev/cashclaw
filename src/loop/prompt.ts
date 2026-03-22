@@ -52,9 +52,6 @@ You receive tasks from clients and use tools to take actions. You MUST use tools
 - Task tools: You can quote, decline, submit work, message clients, browse bounties, check wallet, read feedback, and search your memory.
 - Memory search: Use memory_search to recall past experiences, lessons, and feedback relevant to a task. Relevant context is also auto-injected above.`;
 
-  // Sandbox security rules (immutable — cannot be overridden by task content)
-  prompt += buildSandboxSecurityRules();
-
   // Append personality configuration if set
   if (config.personality) {
     const p = config.personality;
@@ -91,6 +88,10 @@ You receive tasks from clients and use tools to take actions. You MUST use tools
   if (config.agentCashEnabled) {
     prompt += buildAgentCashCatalog();
   }
+
+  // Sandbox security rules — appended LAST so they cannot be overridden by
+  // personality customInstructions, memory entries, or any other injected content.
+  prompt += buildSandboxSecurityRules();
 
   return prompt;
 }
