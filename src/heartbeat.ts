@@ -396,12 +396,13 @@ export function createHeartbeat(
       env: { ...process.env },
     });
 
+    // Always update lastXPostTime to prevent retry loop on failure
+    state.lastXPostTime = Date.now();
     if (result.status !== 0) {
       const stderr = result.stderr?.toString().slice(0, 200) ?? "unknown error";
       emit({ type: "xpost", message: `X post failed: ${stderr}` });
       appendLog(`X post failed: ${stderr}`);
     } else {
-      state.lastXPostTime = Date.now();
       emit({ type: "xpost", message: "X post succeeded" });
       appendLog("X post succeeded");
     }
