@@ -5,6 +5,7 @@ import type { ToolContext } from "../tools/types.js";
 import { getToolDefinitions, executeTool } from "../tools/registry.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { buildTaskContext } from "./context.js";
+import { appendLog } from "../memory/log.js";
 
 const DEFAULT_MAX_TURNS = 10;
 
@@ -45,6 +46,18 @@ export async function runAgentLoop(
     const response: LLMResponse = await llm.chat(messages, tools);
     totalInputTokens += response.usage.inputTokens;
     totalOutputTokens += response.usage.outputTokens;
+
+    // DEBUG: log raw LLM response to diagnose tool-use detection failures
+    {
+      const textContent = response.content
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      const toolCount = response.content.filter((b) => b.type === "tool_use").length;
+      void appendLog(
+        `[DEBUG loop turn=${turn} task=${task.id} status=${task.status}] stopReason=${response.stopReason} tools=${toolCount} text_preview=${JSON.stringify(textContent.slice(0, 800))}`
+      );
+    }
 
     for (const block of response.content) {
       if (block.type === "text" && block.text.trim()) {
@@ -88,6 +101,22 @@ export async function runAgentLoop(
     }
 
     messages.push({ role: "user" as const, content: toolResults });
+
+    // For 'requested' tasks: stop as soon as quote_task or decline_task is called.
+    // The client must accept the quote before any actual work begins.
+    if (task.status === "requested") {
+      const calledQuoteOrDecline = toolUseBlocks.some(
+        (b) => b.name === "quote_task" || b.name === "decline_task",
+      );
+      if (calledQuoteOrDecline) {
+        return {
+          toolCalls: allToolCalls,
+          reasoning: reasoningParts.join("\n"),
+          turns: turn + 1,
+          usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+        };
+      }
+    }
   }
 
   return {

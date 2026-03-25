@@ -43,5 +43,17 @@ export function buildTaskContext(task: Task): string {
     );
   }
 
+  if (task.status === "requested") {
+    parts.push(
+      `\nINSTRUCTION: This task is in 'requested' status. Your ONLY allowed action is to call quote_task (or decline_task). Do NOT do any actual work. Do NOT call submit_work. After quoting, the loop ends — wait for the client to accept.`,
+    );
+  }
+
+  if (task.status === "accepted" || task.status === "revision") {
+    parts.push(
+      `\nACTION REQUIRED: This task is in '${task.status}' status. You MUST complete the work and call the submit_work tool with the full deliverable. Do NOT output the result as plain text — you must use the submit_work tool.`,
+    );
+  }
+
   return parts.join("\n");
 }
