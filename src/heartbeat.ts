@@ -371,27 +371,22 @@ export function createHeartbeat(
     scheduleNext();
   }
 
-  /** Poll HYRVE jobs, accept available ones, and process active orders */
+  /** HYRVE ハートビート送信 + クライアントからのオーダーを処理する */
   async function tickHyrve() {
     if (hyrveClient === null) return;
     try {
-      // Accept new available jobs
-      const jobs = await hyrveClient.listAvailableJobs();
-      for (const job of jobs) {
-        if (hyrveProcessing.has(job.id) || hyrveProcessed.has(job.id)) continue;
-        if (processing.size + hyrveProcessing.size >= config.maxConcurrentTasks) break;
-
-        try {
-          const order = await hyrveClient.acceptJob(job.id, "I can complete this task efficiently.");
-          emit({ type: "poll", message: `[HYRVE] Job accepted: ${job.id} → order ${order.id}` });
-          appendLog(`[HYRVE] Accepted job ${job.id} → order ${order.id}`);
-        } catch {
-          // Job may have been taken — ignore
+      // ハートビート送信（オンライン維持）
+      try {
+        const hb = await hyrveClient.sendHeartbeat();
+        if (hb.pending_jobs > 0) {
+          emit({ type: "poll", message: `[HYRVE] Heartbeat OK, pending_jobs=${hb.pending_jobs}` });
         }
+      } catch {
+        // ハートビート失敗は無視して続行
       }
 
-      // Process active orders
-      const orders = await hyrveClient.listOrders("active");
+      // クライアントが作成した受注（escrow = 支払い済み・作業開始）を確認
+      const orders = await hyrveClient.listOrders("escrow");
       for (const order of orders) {
         const key = `hyrve:${order.id}`;
         if (hyrveProcessing.has(key) || hyrveProcessed.has(key)) continue;
