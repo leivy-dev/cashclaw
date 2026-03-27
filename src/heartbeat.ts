@@ -5,6 +5,8 @@ import type { LLMProvider } from "./llm/types.js";
 import { createClaudeCliProvider } from "./llm/claude-cli.js";
 import type { Task } from "./moltlaunch/types.js";
 import * as cli from "./moltlaunch/cli.js";
+import { createHyrveClientFromEnv, type HyrveClient } from "./hyrve/client.js";
+import type { HyrveOrder } from "./hyrve/types.js";
 import { runAgentLoop, type LoopResult } from "./loop/index.js";
 import { runStudySession } from "./loop/study.js";
 import { storeFeedback } from "./memory/feedback.js";
@@ -79,6 +81,34 @@ export function createHeartbeat(
   let wsReconnectDelay = WS_INITIAL_RECONNECT_MS;
   let wsFailLogged = false;
   const processing = new Set<string>();
+
+  // --- HYRVE AI marketplace client (optional second marketplace) ---
+  const hyrveClient: HyrveClient | null = createHyrveClientFromEnv();
+  const hyrveProcessing = new Set<string>(); // orderId
+  const hyrveProcessed = new Set<string>(); // delivered/completed order IDs
+
+  /** Convert a HYRVE order to a Task-compatible object for the agent loop */
+  function hyrveOrderToTask(order: HyrveOrder, jobDescription: string): Task {
+    const statusMap: Record<string, Task["status"]> = {
+      pending: "requested",
+      active: "accepted",
+      delivered: "submitted",
+      completed: "completed",
+      disputed: "disputed",
+      cancelled: "cancelled",
+      refunded: "expired",
+    };
+    return {
+      id: `hyrve:${order.id}`,
+      agentId: order.agentId,
+      clientAddress: order.clientId,
+      task: jobDescription,
+      status: statusMap[order.status] ?? "requested",
+      acceptedAt: order.createdAt ? new Date(order.createdAt).getTime() : undefined,
+      submittedAt: order.deliveredAt ? new Date(order.deliveredAt).getTime() : undefined,
+      completedAt: order.completedAt ? new Date(order.completedAt).getTime() : undefined,
+    };
+  }
   const completedTasks = new Set<string>();
   // Track task+status combos to prevent duplicate processing from WS+poll overlap
   const processedVersions = new Map<string, string>();
@@ -333,7 +363,90 @@ export function createHeartbeat(
     // Check and auto-claim open bounties on every poll
     void checkBounties();
 
+    // Also poll HYRVE AI marketplace if configured
+    if (hyrveClient !== null) {
+      void tickHyrve();
+    }
+
     scheduleNext();
+  }
+
+  /** Poll HYRVE jobs, accept available ones, and process active orders */
+  async function tickHyrve() {
+    if (hyrveClient === null) return;
+    try {
+      // Accept new available jobs
+      const jobs = await hyrveClient.listAvailableJobs();
+      for (const job of jobs) {
+        if (hyrveProcessing.has(job.id) || hyrveProcessed.has(job.id)) continue;
+        if (processing.size + hyrveProcessing.size >= config.maxConcurrentTasks) break;
+
+        try {
+          const order = await hyrveClient.acceptJob(job.id, "I can complete this task efficiently.");
+          emit({ type: "poll", message: `[HYRVE] Job accepted: ${job.id} → order ${order.id}` });
+          appendLog(`[HYRVE] Accepted job ${job.id} → order ${order.id}`);
+        } catch {
+          // Job may have been taken — ignore
+        }
+      }
+
+      // Process active orders
+      const orders = await hyrveClient.listOrders("active");
+      for (const order of orders) {
+        const key = `hyrve:${order.id}`;
+        if (hyrveProcessing.has(key) || hyrveProcessed.has(key)) continue;
+        if (processing.size + hyrveProcessing.size >= config.maxConcurrentTasks) break;
+
+        // Find the job description (best-effort)
+        let jobDesc = order.description;
+        try {
+          const job = await hyrveClient.getJob(order.jobId);
+          jobDesc = `${job.title}\n\n${job.description}`;
+        } catch {
+          // Use order.description as fallback
+        }
+
+        const task = hyrveOrderToTask(order, jobDesc);
+        hyrveProcessing.add(key);
+        emit({ type: "loop_start", taskId: key, message: `[HYRVE] Agent loop started for order ${order.id}` });
+        appendLog(`[HYRVE] Agent loop started for order ${order.id}`);
+
+        runAgentLoop(llm, task, config)
+          .then(async (result: LoopResult) => {
+            emit({ type: "loop_complete", taskId: key, message: `[HYRVE] Loop done in ${result.turns} turn(s)` });
+            appendLog(`[HYRVE] Loop done for order ${order.id}: ${result.turns} turns`);
+
+            // Deliver the work result
+            const deliverable = result.toolCalls
+              .filter((tc) => tc.success)
+              .map((tc) => `${tc.name}: ${tc.result}`)
+              .join("\n") || result.reasoning;
+
+            try {
+              await hyrveClient!.deliverJob(order.id, deliverable.slice(0, 10_000));
+              hyrveProcessed.add(key);
+              emit({ type: "loop_complete", taskId: key, message: `[HYRVE] Delivered order ${order.id}` });
+              appendLog(`[HYRVE] Delivered order ${order.id}`);
+            } catch (deliverErr) {
+              const msg = deliverErr instanceof Error ? deliverErr.message : String(deliverErr);
+              emit({ type: "error", taskId: key, message: `[HYRVE] Delivery failed: ${msg}` });
+              appendLog(`[HYRVE] Delivery failed for order ${order.id}: ${msg}`);
+            }
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            emit({ type: "error", taskId: key, message: `[HYRVE] Loop error: ${msg}` });
+            appendLog(`[HYRVE] Loop error for order ${order.id}: ${msg}`);
+          })
+          .finally(() => {
+            hyrveProcessing.delete(key);
+          });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      emit({ type: "error", message: `[HYRVE] Poll error: ${msg}` });
+      appendLog(`[HYRVE] Poll error: ${msg}`);
+    }
   }
 
   async function checkBounties() {
