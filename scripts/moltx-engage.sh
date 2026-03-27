@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MoltX engagement script — generic, reads agent identity from config.json
-# Runs every 2h via moltx-engage.timer
+# Runs every 4h via moltx-engage.timer
 # LLM: ANTHROPIC_API_KEY があれば直接REST API、なければ claude CLI
 
 set -euo pipefail
@@ -248,9 +248,13 @@ fi
 
 if [[ -n "${GENERATED_POST:-}" ]] && [[ "${#GENERATED_POST}" -gt 10 ]]; then
   ENCODED=$(python3 -c "import json,sys; print(json.dumps(sys.stdin.read().strip()))" <<< "${GENERATED_POST}")
-  result=$(moltx_curl -X POST https://moltx.io/v1/posts \
+  # HTTPステータスコードも取得してレートリミット判別
+  http_code=$(curl -sf -o /tmp/moltx-post-resp.json -w "%{http_code}" \
+    --header "Authorization: Bearer ${MOLTX_KEY}" \
     -H "Content-Type: application/json" \
-    -d "{\"type\":\"post\",\"content\":${ENCODED}}" || echo '{"success":false}')
+    -X POST https://moltx.io/v1/posts \
+    -d "{\"type\":\"post\",\"content\":${ENCODED}}" 2>>"${LOG_FILE}" || echo "000")
+  result=$(cat /tmp/moltx-post-resp.json 2>/dev/null || echo '{"success":false}')
   success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
   post_id=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('data',{}).get('id',''))" 2>/dev/null || echo "")
   if [[ "${success}" == "True" ]]; then
@@ -266,7 +270,10 @@ try:
 except:
     print(sys.stdin.read()[:200])
 " 2>/dev/null || echo "")
-    loge "Post failed: ${err} (raw: ${result})"
+    loge "Post failed [HTTP ${http_code}]: ${err} (raw: ${result})"
+    if [[ "${http_code}" == "429" ]]; then
+      loge "Rate limited — consider reducing post frequency"
+    fi
   fi
 else
   loge "LLM generation returned empty or too short: '${GENERATED_POST:-}'"
