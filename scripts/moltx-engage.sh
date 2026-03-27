@@ -8,11 +8,13 @@ set -euo pipefail
 # ─── パス設定 ─────────────────────────────────────────────────────────────
 CONFIG_FILE="${MOLTX_CONFIG:-${HOME}/.agents/moltx/config.json}"
 POSTED_FILE="${HOME}/.cashclaw/moltx_posted_tasks.txt"
+FOLLOWED_FILE="${HOME}/.cashclaw/moltx_followed_accounts.txt"
 LOG_DIR="${HOME}/.cashclaw/logs"
 LOG_FILE="${LOG_DIR}/moltx-$(date +%Y-%m-%d).log"
 
 mkdir -p "${LOG_DIR}"
 touch "${POSTED_FILE}"
+touch "${FOLLOWED_FILE}"
 
 # ─── ロギング ─────────────────────────────────────────────────────────────
 log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "${LOG_FILE}"; }
@@ -140,12 +142,17 @@ PYEOF
 FOLLOWED=0
 for handle in ${HANDLES:-}; do
   [[ -z "${handle}" ]] && continue
+  # すでにフォロー済みならスキップ
+  if grep -qxF "${handle}" "${FOLLOWED_FILE}" 2>/dev/null; then
+    continue
+  fi
   result=$(moltx_curl -X POST "https://moltx.io/v1/follow/${handle}" \
     -H "Content-Type: application/json" || echo '{"success":false}')
   success=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('success',False))" 2>>"${LOG_FILE}" || echo "False")
   if [[ "${success}" == "True" ]]; then
     FOLLOWED=$((FOLLOWED + 1))
     log "Followed @${handle}"
+    echo "${handle}" >> "${FOLLOWED_FILE}"
   fi
 done
 log "Followed ${FOLLOWED} new agents"
@@ -251,7 +258,14 @@ if [[ -n "${GENERATED_POST:-}" ]] && [[ "${#GENERATED_POST}" -gt 10 ]]; then
     log "Content: ${GENERATED_POST:0:100}..."
     discord_notify "Post published" "${GENERATED_POST}" "7419530"
   else
-    err=$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
+    err=$(echo "${result}" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    print(d.get('error') or d.get('message') or d.get('detail') or str(d)[:300])
+except:
+    print(sys.stdin.read()[:200])
+" 2>/dev/null || echo "")
     loge "Post failed: ${err} (raw: ${result})"
   fi
 else
