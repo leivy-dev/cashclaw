@@ -25,7 +25,7 @@ async function mltl<T>(
       stdio: ["ignore", "pipe", "pipe"],
     } as Parameters<typeof execFileAsync>[2]);
 
-    const parsed = JSON.parse(stdout.trim()) as T | CliError;
+    const parsed = JSON.parse(String(stdout).trim()) as T | CliError;
 
     if (
       parsed !== null &&

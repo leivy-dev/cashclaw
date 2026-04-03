@@ -380,13 +380,31 @@ export function createHeartbeat(
         const hb = await hyrveClient.sendHeartbeat();
         if (hb.pending_jobs > 0) {
           emit({ type: "poll", message: `[HYRVE] Heartbeat OK, pending_jobs=${hb.pending_jobs}` });
+          appendLog(`[HYRVE] Heartbeat: ${hb.pending_jobs} pending job(s)`);
         }
       } catch {
         // ハートビート失敗は無視して続行
       }
 
-      // クライアントが作成した受注（escrow = 支払い済み・作業開始）を確認
-      const orders = await hyrveClient.listOrders("escrow");
+      // オープンな仕事を定期チェックしてログに残す（発注者が来たときに即気づけるよう）
+      try {
+        const availableJobs = await hyrveClient.listAvailableJobs();
+        if (availableJobs.length > 0) {
+          const jobSummary = availableJobs
+            .map((j) => `"${j.title}" ($${j.budget})`)
+            .join(", ");
+          emit({ type: "poll", message: `[HYRVE] ${availableJobs.length} open job(s): ${jobSummary}` });
+          appendLog(`[HYRVE] Open jobs: ${jobSummary}`);
+        }
+      } catch {
+        // ジョブ一覧取得失敗は無視
+      }
+
+      // pending（クライアントが発注済み・エージェント未着手）と active（作業中）を処理する
+      // ※ Hyrve の実際のステータスは pending/active/delivered/completed で escrow は存在しない
+      const pendingOrders = await hyrveClient.listOrders("pending").catch(() => [] as HyrveOrder[]);
+      const activeOrders = await hyrveClient.listOrders("active").catch(() => [] as HyrveOrder[]);
+      const orders = [...pendingOrders, ...activeOrders];
       for (const order of orders) {
         const key = `hyrve:${order.id}`;
         if (hyrveProcessing.has(key) || hyrveProcessed.has(key)) continue;
@@ -651,8 +669,28 @@ export function createHeartbeat(
       state.lastXPostTime = Date.now();
     }
     appendLog("Heartbeat started");
+    // 起動時に Hyrve Stripe onboarding 状態を確認
+    if (hyrveClient !== null) {
+      void checkHyrveOnboarding();
+    }
     connectWs();
     void tick();
+  }
+
+  async function checkHyrveOnboarding() {
+    if (hyrveClient === null) return;
+    try {
+      const wallet = await hyrveClient.getWallet();
+      if (!wallet.stripeOnboardingComplete) {
+        const msg = "[HYRVE] WARNING: Stripe onboarding not complete — payments cannot be received. Visit https://app.hyrveai.com to complete onboarding.";
+        emit({ type: "error", message: msg });
+        appendLog(msg);
+      } else {
+        appendLog(`[HYRVE] Stripe onboarding complete. Balance: $${wallet.balance} USD`);
+      }
+    } catch {
+      // onboarding check is best-effort
+    }
   }
 
   function stop() {

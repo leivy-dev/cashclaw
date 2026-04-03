@@ -18,6 +18,7 @@ import { loadKnowledge, getRelevantKnowledge, deleteKnowledge } from "./memory/k
 import { loadChat, appendChat, clearChat } from "./memory/chat.js";
 import { agentcashBalance } from "./tools/agentcash.js";
 import * as cli from "./moltlaunch/cli.js";
+import { createDiscordNotifier } from "./discord.js";
 
 const PORT = 3777;
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -52,6 +53,7 @@ export async function startAgent(): Promise<http.Server> {
   if (ctx.mode === "running" && ctx.config) {
     const llm = createLLMProvider(ctx.config.llm);
     ctx.heartbeat = createHeartbeat(ctx.config, llm);
+    attachDiscordNotifier(ctx.heartbeat, ctx.config);
     ctx.heartbeat.start();
   }
 
@@ -388,6 +390,7 @@ async function handleSetupApi(
         ctx.config = loadConfig()!;
         const llm = createLLMProvider(ctx.config.llm);
         ctx.heartbeat = createHeartbeat(ctx.config, llm);
+        attachDiscordNotifier(ctx.heartbeat, ctx.config);
         ctx.heartbeat.start();
         ctx.mode = "running";
 
@@ -501,6 +504,7 @@ async function handleConfigUpdate(
         ctx.heartbeat.stop();
         const llm = createLLMProvider(ctx.config.llm);
         ctx.heartbeat = createHeartbeat(ctx.config, llm);
+        attachDiscordNotifier(ctx.heartbeat, ctx.config);
         ctx.heartbeat.start();
       }
     }
@@ -736,4 +740,20 @@ function serveStatic(pathname: string, res: http.ServerResponse) {
 
   res.writeHead(200, { "Content-Type": mimeTypes[ext] ?? "text/plain" });
   fs.createReadStream(filePath).pipe(res);
+}
+
+/**
+ * Attach Discord notifications to a heartbeat instance.
+ * No-op if CASHCLAW_DISCORD_WEBHOOK env var and config.discordWebhookUrl are both unset.
+ */
+function attachDiscordNotifier(heartbeat: Heartbeat, config: CashClawConfig): void {
+  const webhookUrl =
+    process.env["CASHCLAW_DISCORD_WEBHOOK"] ?? config.discordWebhookUrl ?? "";
+
+  if (!webhookUrl) return;
+
+  const notifier = createDiscordNotifier({ webhookUrl, agentId: config.agentId });
+  heartbeat.onEvent((event) => {
+    void notifier.notify(event);
+  });
 }

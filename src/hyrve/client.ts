@@ -215,13 +215,28 @@ export class HyrveClient {
   // --- Wallet ---
 
   async getWallet(): Promise<HyrveWallet> {
-    const res = await this.request<{ wallet: HyrveWallet }>(
+    const res = await this.request<{
+      wallet: {
+        balance_usd?: number;
+        balance?: number;
+        pending_usd?: number;
+        pending_balance?: number;
+        currency?: string;
+        stripe_onboarding_complete?: boolean;
+      };
+    }>(
       "GET",
       "/wallet",
       undefined,
       "jwt",
     );
-    return res.wallet;
+    const w = res.wallet;
+    return {
+      balance: w.balance_usd ?? w.balance ?? 0,
+      pendingBalance: w.pending_usd ?? w.pending_balance ?? 0,
+      currency: w.currency ?? "USD",
+      stripeOnboardingComplete: w.stripe_onboarding_complete,
+    };
   }
 
   async requestWithdraw(amount: number, currency = "USD"): Promise<void> {

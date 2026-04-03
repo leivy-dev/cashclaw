@@ -38,6 +38,7 @@ export interface HyrveWallet {
   balance: number;
   currency: string;
   pendingBalance: number;
+  stripeOnboardingComplete?: boolean;
 }
 
 export interface HyrveAgentProfile {

@@ -30,7 +30,7 @@ async function runAgentCash<T>(
       env: { ...process.env },
       stdio: ["ignore", "pipe", "pipe"],
     } as Parameters<typeof execFileAsync>[2]);
-    return JSON.parse(stdout.trim()) as T;
+    return JSON.parse(String(stdout).trim()) as T;
   } catch (err) {
     if (err instanceof Error) {
       if ("code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
